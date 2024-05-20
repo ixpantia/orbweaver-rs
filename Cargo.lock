@@ -3,5 +3,5 @@
 version = 3
 
 [[package]]
-name = "orbweaver-rs"
+name = "orbweaver"
 version = "0.1.0"
