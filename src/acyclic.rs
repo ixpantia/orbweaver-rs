@@ -1,4 +1,4 @@
-use super::*;
+use super::{topological_sort::topological_sort, *};
 
 #[derive(Debug)]
 pub struct AcyclicDirectedGraph<Data> {
@@ -18,49 +18,6 @@ where
     }
 }
 
-/// L ← Empty list that will contain the sorted elements
-/// S ← Set of all nodes with no incoming edge
-///
-/// while S is not empty do
-///     remove a node n from S
-///     add n to L
-///     for each node m with an edge e from n to m do
-///         remove edge e from the graph
-///         if m has no other incoming edges then
-///             insert m into S
-///
-/// if graph has edges then
-///     return error   (graph has at least one cycle)
-/// else
-///     return L   (a topologically sorted order)
-fn topological_sort<Data>(dg: &DirectedGraph<Data>) -> Result<Vec<NodeId>, error::GraphHasCycle> {
-    let mut dg_temp = dg.into_dataless();
-    let mut l = Vec::new();
-    let mut s: Vec<NodeId> = dg_temp
-        .get_nodes_no_incoming_edges()
-        .into_iter()
-        .map(|node| node.id)
-        .collect();
-    while let Some(n) = s.pop() {
-        l.push(n.clone());
-        let nodes_m = dg_temp
-            .nodes()
-            .map(|m| m.id)
-            .filter_map(|m| Some((m.clone(), dg_temp.get_edge(&n, &m)?)))
-            .collect::<Vec<_>>();
-        for (m, e) in nodes_m {
-            dg_temp.remove_edge(e);
-            if dg_temp.get_incoming_edges(&m).is_empty() {
-                s.push(m);
-            }
-        }
-    }
-    if !dg_temp.edges.is_empty() {
-        return Err(error::GraphHasCycle);
-    }
-    Ok(l)
-}
-
 impl<Data> AcyclicDirectedGraph<Data> {
     pub fn build(
         dg: DirectedGraph<Data>,
@@ -76,8 +33,8 @@ impl<Data> AcyclicDirectedGraph<Data> {
     }
     /// Finds path using topological sort
     pub fn find_path(&self, from: impl AsRef<str>, to: impl AsRef<str>) -> Option<Vec<NodeId>> {
-        let start_id = self.get_node(&from)?.id;
-        let goal_id = self.get_node(&to)?.id;
+        let start_id = self.get_node(&from)?.node_id;
+        let goal_id = self.get_node(&to)?.node_id;
         if start_id == goal_id {
             return Some(vec![start_id]);
         }
@@ -86,20 +43,21 @@ impl<Data> AcyclicDirectedGraph<Data> {
         let start_index = topo_order.iter().position(|id| id == &start_id)?;
         let goal_index = topo_order.iter().position(|id| id == &goal_id)?;
 
-        if start_index > goal_index {
+        if goal_index > start_index {
             return None; // No path from start to goal in a DAG if start comes after goal in topo order
         }
 
         let mut path = Vec::new();
-        let mut current = start_id.clone();
+        let mut current = goal_id.clone();
         path.push(current.clone());
 
         // Explore the path using the topological order
-        for node_id in topo_order[start_index..=goal_index].iter() {
-            if self.get_edge(&current, node_id).is_some() {
+        for node_id in &topo_order[goal_index..=start_index] {
+            if self.edge_exists(node_id, &current) {
                 path.push(node_id.clone());
                 current = node_id.clone();
-                if current == goal_id {
+                if current == start_id {
+                    path.reverse();
                     return Some(path);
                 }
             }
@@ -124,14 +82,16 @@ impl<Data> AcyclicDirectedGraph<Data> {
                 all_paths.push(current_path.clone());
             } else {
                 // Continue to next nodes that can be visited from the current node
-                for edge in graph.get_outgoing_edges(&current) {
-                    dfs(
-                        graph,
-                        edge.to.clone(),
-                        goal_id.clone(),
-                        current_path,
-                        all_paths,
-                    );
+                if let Some(children) = graph.children(&current) {
+                    for child in children {
+                        dfs(
+                            graph,
+                            child.clone(),
+                            goal_id.clone(),
+                            current_path,
+                            all_paths,
+                        );
+                    }
                 }
             }
 
@@ -140,11 +100,11 @@ impl<Data> AcyclicDirectedGraph<Data> {
         }
 
         let start_id = match self.get_node(&from) {
-            Some(node) => node.id,
+            Some(node) => node.node_id,
             None => return Vec::new(), // Node not found
         };
         let goal_id = match self.get_node(&to) {
-            Some(node) => node.id,
+            Some(node) => node.node_id,
             None => return Vec::new(), // Node not found
         };
 
@@ -155,25 +115,6 @@ impl<Data> AcyclicDirectedGraph<Data> {
         dfs(self, start_id, goal_id, &mut current_path, &mut all_paths);
 
         all_paths
-    }
-
-    pub fn filter(&self, predicate: impl FnMut(&Node<&Data>) -> bool) -> Self
-    where
-        Data: Clone,
-    {
-        let dg = self.dg.filter(predicate);
-        let filtered_node_ids: Vec<_> = dg.nodes().map(|n| n.id).collect();
-        let topological_sort: Vec<_> = self
-            .topological_sort
-            .iter()
-            .filter(|node| filtered_node_ids.contains(node))
-            .cloned()
-            .collect();
-
-        Self {
-            topological_sort,
-            dg,
-        }
     }
 }
 
@@ -278,7 +219,10 @@ mod tests {
 
         let graph = AcyclicDirectedGraph::build(graph).unwrap();
 
-        let paths = graph.find_all_paths("0", "4");
+        let mut paths = graph.find_all_paths("0", "4");
+        println!("{paths:?}");
+
+        paths.sort_unstable();
 
         assert_eq!(paths.len(), 2);
         assert_eq!(paths[0].len(), 5);

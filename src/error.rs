@@ -1,4 +1,4 @@
-use crate::{Edge, NodeId};
+use crate::NodeId;
 
 #[derive(Debug)]
 pub struct GraphHasCycle;
@@ -32,7 +32,6 @@ impl std::error::Error for DuplicateNode {}
 #[derive(Debug)]
 pub enum AddEdgeError {
     NodeNotExist(NodeId),
-    DuplicateEdge(Edge),
 }
 
 impl AddEdgeError {
@@ -49,14 +48,6 @@ impl std::fmt::Display for AddEdgeError {
                     f,
                     "Unable to add edge, the node `{}` does not exists",
                     node_id.as_ref()
-                )
-            }
-            Self::DuplicateEdge(edge) => {
-                write!(
-                    f,
-                    "Unable to add edge, edge from `{}` to `{}` already exists",
-                    edge.from.as_ref(),
-                    edge.to.as_ref()
                 )
             }
         }
