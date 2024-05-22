@@ -1,6 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
-    ops::Deref,
+    ops::{Deref, Not},
     rc::Rc,
 };
 
@@ -48,6 +48,12 @@ impl From<NodeId> for String {
 impl std::cmp::PartialEq<str> for NodeId {
     fn eq(&self, other: &str) -> bool {
         self.0.as_ref().eq(other)
+    }
+}
+
+impl std::cmp::PartialEq<&str> for NodeId {
+    fn eq(&self, other: &&str) -> bool {
+        self.0.as_ref().eq(*other)
     }
 }
 
@@ -139,6 +145,12 @@ impl<Data> DirectedGraph<Data> {
     pub fn get_node(&self, id: impl AsRef<str>) -> Option<Node<&Data>> {
         if let Some((node_id, data)) = self.nodes.get_key_value(id.as_ref()) {
             return Some(Node::new(node_id.clone(), data));
+        }
+        None
+    }
+    pub fn get_node_id(&self, id: impl AsRef<str>) -> Option<NodeId> {
+        if let Some((node_id, _)) = self.nodes.get_key_value(id.as_ref()) {
+            return Some(node_id.clone());
         }
         None
     }
@@ -271,18 +283,18 @@ impl<Data> DirectedGraph<Data> {
         }
 
         let mut queue = Vec::new();
-        let mut visited = Vec::new();
+        let mut visited = HashSet::new();
         let mut parents = Vec::new(); // To track the path back to the start node
 
         // Initialize
         queue.push(&start_id);
-        visited.push(&start_id);
+        visited.insert(&start_id);
 
         while let Some(current) = queue.pop() {
             if let Some(children) = self.children(current) {
                 for child in children {
                     if !visited.contains(&child) {
-                        visited.push(child);
+                        visited.insert(child);
                         parents.push((child, current));
 
                         if child == &goal_id {
@@ -302,6 +314,30 @@ impl<Data> DirectedGraph<Data> {
         self.parents.clear();
         self.children.clear();
         self
+    }
+
+    pub fn least_common_parents(&self, selected: &[impl AsRef<str>]) -> Option<Vec<NodeId>> {
+        let selected: HashSet<NodeId> = selected
+            .iter()
+            .map(|node| self.get_node_id(node.as_ref()))
+            .collect::<Option<_>>()?;
+        let least_common_parent = selected
+            .iter()
+            .filter(|&node_id| {
+                match self.parents.get(node_id.as_ref()) {
+                    // We return true because if the node has no parent then
+                    // it is part of the set of least common
+                    // parents
+                    None => true,
+                    Some(parents) => parents
+                        .iter()
+                        .any(|parent| selected.contains(parent.as_ref()))
+                        .not(),
+                }
+            })
+            .cloned()
+            .collect();
+        Some(least_common_parent)
     }
 
     // With no dependencies
@@ -404,5 +440,36 @@ mod tests {
         let path = graph.find_path("0", "4").unwrap();
 
         assert_eq!(path.len(), 2);
+    }
+
+    #[test]
+    fn test_least_common_parents() {
+        let mut graph = DirectedGraph::<()>::new();
+        let _ = graph.add_node("0", ());
+        let _ = graph.add_node("1", ());
+        let _ = graph.add_node("2", ());
+        let _ = graph.add_node("3", ());
+        let _ = graph.add_node("4", ());
+        let _ = graph.add_edge("0", "1");
+        let _ = graph.add_edge("1", "2");
+        let _ = graph.add_edge("2", "3");
+        let _ = graph.add_edge("3", "4");
+        let _ = graph.add_edge("0", "4");
+
+        assert_eq!(graph.least_common_parents(&["0", "1"]).unwrap(), vec!["0"]);
+        assert_eq!(
+            graph.least_common_parents(&["0", "1", "2"]).unwrap(),
+            vec!["0"]
+        );
+        assert_eq!(
+            graph.least_common_parents(&["0", "1", "2", "4"]).unwrap(),
+            vec!["0"]
+        );
+
+        let mut actual = graph.least_common_parents(&["0", "1", "3"]).unwrap();
+        actual.sort_unstable();
+        let expect = vec!["0", "3"];
+
+        assert_eq!(actual, expect);
     }
 }
