@@ -1,8 +1,6 @@
-use crate::{error, DirectedGraph, NodeId};
+use crate::prelude::*;
 
-pub fn topological_sort<Data>(
-    dg: &DirectedGraph<Data>,
-) -> Result<Vec<NodeId>, error::GraphHasCycle> {
+pub fn topological_sort<Data>(dg: &DirectedGraph<Data>) -> Result<Vec<NodeId>, GraphHasCycle> {
     let mut dg = dg.into_dataless();
     let mut res = Vec::new();
     let mut no_deps = dg.get_leaves();
@@ -21,7 +19,7 @@ pub fn topological_sort<Data>(
     }
 
     if dg.n_edges != 0 {
-        return Err(error::GraphHasCycle);
+        return Err(GraphHasCycle);
     }
 
     Ok(res)

@@ -1,9 +1,14 @@
-use super::{topological_sort::topological_sort, *};
+use crate::prelude::*;
+use std::ops::Deref;
+mod topological_sort;
+use serde::{Deserialize, Serialize};
+use topological_sort::topological_sort;
 
 #[derive(Debug)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct AcyclicDirectedGraph<Data> {
-    dg: DirectedGraph<Data>,
-    topological_sort: Vec<NodeId>,
+    pub(crate) dg: DirectedGraph<Data>,
+    pub(crate) topological_sort: Vec<NodeId>,
 }
 
 impl<Data> Clone for AcyclicDirectedGraph<Data>
@@ -19,10 +24,8 @@ where
 }
 
 impl<Data> AcyclicDirectedGraph<Data> {
-    pub fn build(
-        dg: DirectedGraph<Data>,
-    ) -> Result<AcyclicDirectedGraph<Data>, error::GraphHasCycle> {
-        let topological_sort = topological_sort(&dg)?;
+    pub fn build(dg: DirectedGraph<Data>) -> Result<AcyclicDirectedGraph<Data>, GraphHasCycle> {
+        let topological_sort = topological_sort::<Data>(&dg)?;
         Ok(AcyclicDirectedGraph {
             dg,
             topological_sort,
@@ -148,7 +151,7 @@ mod tests {
         let _ = graph.add_edge("3", "4");
         let _ = graph.add_edge("4", "5");
 
-        assert!(topological_sort(&graph).is_ok());
+        assert!(topological_sort::<()>(&graph).is_ok());
     }
 
     #[test]
@@ -165,7 +168,7 @@ mod tests {
         let _ = graph.add_edge("4", "5");
         let _ = graph.add_edge("5", "1");
 
-        assert!(topological_sort(&graph).is_err());
+        assert!(topological_sort::<()>(&graph).is_err());
     }
 
     #[test]
