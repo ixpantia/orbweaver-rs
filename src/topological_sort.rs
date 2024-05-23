@@ -5,22 +5,22 @@ pub fn topological_sort<Data>(
 ) -> Result<Vec<NodeId>, error::GraphHasCycle> {
     let mut dg = dg.into_dataless();
     let mut res = Vec::new();
-    let mut no_deps = dg.no_deps().map(|node| node.node_id).collect::<Vec<_>>();
+    let mut no_deps = dg.get_leaves();
 
     while let Some(node) = no_deps.pop() {
         res.push(node.clone());
 
-        if let Some(parents) = dg.parents(&node).cloned() {
+        if let Ok(parents) = dg.parents(&node).cloned() {
             for parent in parents {
                 dg.remove_edge(&parent, &node);
-                if !dg.has_children(&parent) {
+                if !dg.has_children(&parent).unwrap() {
                     no_deps.push(parent.clone());
                 }
             }
         }
     }
 
-    if !dg.parents.is_empty() {
+    if dg.n_edges != 0 {
         return Err(error::GraphHasCycle);
     }
 

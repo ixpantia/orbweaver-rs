@@ -32,19 +32,29 @@ impl<Data> AcyclicDirectedGraph<Data> {
         self.dg
     }
     /// Finds path using topological sort
-    pub fn find_path(&self, from: impl AsRef<str>, to: impl AsRef<str>) -> Option<Vec<NodeId>> {
+    pub fn find_path(
+        &self,
+        from: impl AsRef<str>,
+        to: impl AsRef<str>,
+    ) -> GraphInteractionResult<Option<Vec<NodeId>>> {
         let start_id = self.get_node(&from)?.node_id;
         let goal_id = self.get_node(&to)?.node_id;
         if start_id == goal_id {
-            return Some(vec![start_id]);
+            return Ok(Some(vec![start_id]));
         }
 
         let topo_order = self.topological_sort.as_slice();
-        let start_index = topo_order.iter().position(|id| id == &start_id)?;
-        let goal_index = topo_order.iter().position(|id| id == &goal_id)?;
+        let start_index = topo_order
+            .iter()
+            .position(|id| id == &start_id)
+            .expect("Node must be included in topo_order");
+        let goal_index = topo_order
+            .iter()
+            .position(|id| id == &goal_id)
+            .expect("Node must be included in topo_order");
 
         if goal_index > start_index {
-            return None; // No path from start to goal in a DAG if start comes after goal in topo order
+            return Ok(None); // No path from start to goal in a DAG if start comes after goal in topo order
         }
 
         let mut path = Vec::new();
@@ -58,14 +68,18 @@ impl<Data> AcyclicDirectedGraph<Data> {
                 current = node_id.clone();
                 if current == start_id {
                     path.reverse();
-                    return Some(path);
+                    return Ok(Some(path));
                 }
             }
         }
 
-        None // No path found
+        Ok(None)
     }
-    pub fn find_all_paths(&self, from: impl AsRef<str>, to: impl AsRef<str>) -> Vec<Vec<NodeId>> {
+    pub fn find_all_paths(
+        &self,
+        from: impl AsRef<str>,
+        to: impl AsRef<str>,
+    ) -> GraphInteractionResult<Vec<Vec<NodeId>>> {
         // Helper function to perform DFS
         fn dfs<Data>(
             graph: &AcyclicDirectedGraph<Data>,
@@ -82,16 +96,14 @@ impl<Data> AcyclicDirectedGraph<Data> {
                 all_paths.push(current_path.clone());
             } else {
                 // Continue to next nodes that can be visited from the current node
-                if let Some(children) = graph.children(&current) {
-                    for child in children {
-                        dfs(
-                            graph,
-                            child.clone(),
-                            goal_id.clone(),
-                            current_path,
-                            all_paths,
-                        );
-                    }
+                for child in graph.children(&current).expect("Node must exist") {
+                    dfs(
+                        graph,
+                        child.clone(),
+                        goal_id.clone(),
+                        current_path,
+                        all_paths,
+                    );
                 }
             }
 
@@ -99,14 +111,8 @@ impl<Data> AcyclicDirectedGraph<Data> {
             current_path.pop();
         }
 
-        let start_id = match self.get_node(&from) {
-            Some(node) => node.node_id,
-            None => return Vec::new(), // Node not found
-        };
-        let goal_id = match self.get_node(&to) {
-            Some(node) => node.node_id,
-            None => return Vec::new(), // Node not found
-        };
+        let start_id = self.get_node_id(&from)?;
+        let goal_id = self.get_node_id(&to)?;
 
         let mut all_paths = Vec::new();
         let mut current_path = Vec::new();
@@ -114,7 +120,7 @@ impl<Data> AcyclicDirectedGraph<Data> {
         // Start DFS from the start node
         dfs(self, start_id, goal_id, &mut current_path, &mut all_paths);
 
-        all_paths
+        Ok(all_paths)
     }
 }
 
@@ -179,7 +185,7 @@ mod tests {
 
         let path = graph.find_path("0", "4").unwrap();
 
-        assert_eq!(path.len(), 5);
+        assert_eq!(path.unwrap().len(), 5);
     }
 
     #[test]
@@ -200,7 +206,7 @@ mod tests {
 
         let path = graph.find_path("0", "4").unwrap();
 
-        assert_eq!(path.len(), 5);
+        assert_eq!(path.unwrap().len(), 5);
     }
 
     #[test]
@@ -219,7 +225,7 @@ mod tests {
 
         let graph = AcyclicDirectedGraph::build(graph).unwrap();
 
-        let mut paths = graph.find_all_paths("0", "4");
+        let mut paths = graph.find_all_paths("0", "4").unwrap();
         println!("{paths:?}");
 
         paths.sort_unstable();

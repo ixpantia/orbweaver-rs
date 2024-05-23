@@ -30,28 +30,24 @@ impl std::fmt::Display for DuplicateNode {
 impl std::error::Error for DuplicateNode {}
 
 #[derive(Debug)]
-pub enum AddEdgeError {
+pub enum GraphInteractionError {
     NodeNotExist(NodeId),
 }
 
-impl AddEdgeError {
+impl GraphInteractionError {
     pub(crate) fn node_not_exists(id: impl AsRef<str>) -> Self {
         Self::NodeNotExist(NodeId::from(id.as_ref()))
     }
 }
 
-impl std::fmt::Display for AddEdgeError {
+impl std::fmt::Display for GraphInteractionError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::NodeNotExist(node_id) => {
-                write!(
-                    f,
-                    "Unable to add edge, the node `{}` does not exists",
-                    node_id.as_ref()
-                )
+                write!(f, "Node `{}` does not exist", node_id.as_ref())
             }
         }
     }
 }
 
-impl std::error::Error for AddEdgeError {}
+impl std::error::Error for GraphInteractionError {}
