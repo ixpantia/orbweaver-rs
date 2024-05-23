@@ -6,33 +6,33 @@ use topological_sort::topological_sort;
 
 #[derive(Debug)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub struct AcyclicDirectedGraph<Data> {
-    pub(crate) dg: DirectedGraph<Data>,
+pub struct DirectedAcyclicGraph<Data> {
+    pub(crate) dg: Box<DirectedGraph<Data>>,
     pub(crate) topological_sort: Vec<NodeId>,
 }
 
-impl<Data> Clone for AcyclicDirectedGraph<Data>
+impl<Data> Clone for DirectedAcyclicGraph<Data>
 where
     Data: Clone,
 {
     fn clone(&self) -> Self {
-        AcyclicDirectedGraph {
+        DirectedAcyclicGraph {
             dg: self.dg.clone(),
             topological_sort: self.topological_sort.clone(),
         }
     }
 }
 
-impl<Data> AcyclicDirectedGraph<Data> {
-    pub fn build(dg: DirectedGraph<Data>) -> Result<AcyclicDirectedGraph<Data>, GraphHasCycle> {
+impl<Data> DirectedAcyclicGraph<Data> {
+    pub fn build(dg: DirectedGraph<Data>) -> Result<DirectedAcyclicGraph<Data>, GraphHasCycle> {
         let topological_sort = topological_sort::<Data>(&dg)?;
-        Ok(AcyclicDirectedGraph {
-            dg,
+        Ok(DirectedAcyclicGraph {
+            dg: Box::new(dg),
             topological_sort,
         })
     }
     pub fn into_inner(self) -> DirectedGraph<Data> {
-        self.dg
+        *self.dg
     }
     /// Finds path using topological sort
     pub fn find_path(
@@ -85,7 +85,7 @@ impl<Data> AcyclicDirectedGraph<Data> {
     ) -> GraphInteractionResult<Vec<Vec<NodeId>>> {
         // Helper function to perform DFS
         fn dfs<Data>(
-            graph: &AcyclicDirectedGraph<Data>,
+            graph: &DirectedAcyclicGraph<Data>,
             current: NodeId,
             goal_id: NodeId,
             current_path: &mut Vec<NodeId>,
@@ -127,7 +127,7 @@ impl<Data> AcyclicDirectedGraph<Data> {
     }
 }
 
-impl<Data> Deref for AcyclicDirectedGraph<Data> {
+impl<Data> Deref for DirectedAcyclicGraph<Data> {
     type Target = DirectedGraph<Data>;
     fn deref(&self) -> &Self::Target {
         &self.dg
@@ -184,7 +184,7 @@ mod tests {
         let _ = graph.add_edge("2", "3");
         let _ = graph.add_edge("3", "4");
 
-        let graph = AcyclicDirectedGraph::build(graph).unwrap();
+        let graph = DirectedAcyclicGraph::build(graph).unwrap();
 
         let path = graph.find_path("0", "4").unwrap();
 
@@ -205,7 +205,7 @@ mod tests {
         let _ = graph.add_edge("3", "4");
         let _ = graph.add_edge("0", "4");
 
-        let graph = AcyclicDirectedGraph::build(graph).unwrap();
+        let graph = DirectedAcyclicGraph::build(graph).unwrap();
 
         let path = graph.find_path("0", "4").unwrap();
 
@@ -226,7 +226,7 @@ mod tests {
         let _ = graph.add_edge("3", "4");
         let _ = graph.add_edge("0", "4");
 
-        let graph = AcyclicDirectedGraph::build(graph).unwrap();
+        let graph = DirectedAcyclicGraph::build(graph).unwrap();
 
         let mut paths = graph.find_all_paths("0", "4").unwrap();
         println!("{paths:?}");

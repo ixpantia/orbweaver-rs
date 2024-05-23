@@ -1,6 +1,5 @@
-use std::{ops::Deref, rc::Rc};
-
 use serde::{Deserialize, Serialize};
+use std::{ops::Deref, rc::Rc};
 
 pub mod acyclic;
 pub mod directed;
@@ -9,11 +8,65 @@ pub mod error;
 /// Prelude of data types and functionality.
 pub mod prelude {
     pub(crate) type GraphInteractionResult<T> = Result<T, GraphInteractionError>;
-    pub use crate::acyclic::AcyclicDirectedGraph;
+    pub use crate::acyclic::DirectedAcyclicGraph;
     pub use crate::directed::DirectedGraph;
     pub use crate::error::*;
+    pub use crate::Graph;
     pub use crate::Node;
     pub use crate::NodeId;
+}
+
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub enum Graph<Data> {
+    Directed(directed::DirectedGraph<Data>),
+    DirectedAcyclic(acyclic::DirectedAcyclicGraph<Data>),
+}
+
+impl<Data> From<acyclic::DirectedAcyclicGraph<Data>> for Graph<Data> {
+    fn from(v: acyclic::DirectedAcyclicGraph<Data>) -> Self {
+        Self::DirectedAcyclic(v)
+    }
+}
+
+impl<Data> From<directed::DirectedGraph<Data>> for Graph<Data> {
+    fn from(v: directed::DirectedGraph<Data>) -> Self {
+        Self::Directed(v)
+    }
+}
+
+#[allow(clippy::result_large_err)]
+impl<Data> Graph<Data> {
+    pub fn try_into_directed(self) -> Result<directed::DirectedGraph<Data>, Self> {
+        if let Self::Directed(v) = self {
+            Ok(v)
+        } else {
+            Err(self)
+        }
+    }
+
+    pub fn try_into_directed_acyclic(self) -> Result<acyclic::DirectedAcyclicGraph<Data>, Self> {
+        if let Self::DirectedAcyclic(v) = self {
+            Ok(v)
+        } else {
+            Err(self)
+        }
+    }
+
+    /// Returns `true` if the graph is [`Directed`].
+    ///
+    /// [`Directed`]: Graph::Directed
+    #[must_use]
+    pub fn is_directed(&self) -> bool {
+        matches!(self, Self::Directed(..))
+    }
+
+    /// Returns `true` if the graph is [`DirectedAcyclic`].
+    ///
+    /// [`DirectedAcyclic`]: Graph::DirectedAcyclic
+    #[must_use]
+    pub fn is_directed_acyclic(&self) -> bool {
+        matches!(self, Self::DirectedAcyclic(..))
+    }
 }
 
 #[derive(Ord, PartialOrd, Eq, PartialEq, Debug, Hash)]
