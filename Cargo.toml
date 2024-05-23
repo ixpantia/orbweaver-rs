@@ -2,14 +2,17 @@
 name = "orbweaver"
 version = "0.1.0"
 edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+authors = ["ixpantia <hola@ixpantia.com>", "Andrés F. Quintero <andres@ixpantia.com>"]
+description = "Crate designed for effortless construction and analysis of graph data structures."
+repository = "https://github.com/ixpantia/orbweaver-rs"
+license = "MIT"
+readme = "README.md"
 
 [dev-dependencies]
 
 [dependencies]
-serde = { version = "1.0.202", features = ["derive", "rc"] }
+serde = { version = "1.0.202", features = ["derive", "rc"], optional = true }
 
 [features]
-serde = []
+serde = ["dep:serde"]
 default = ["serde"]
