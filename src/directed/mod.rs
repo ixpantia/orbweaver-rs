@@ -24,6 +24,28 @@ impl<Data: Clone> Clone for DirectedGraph<Data> {
     }
 }
 
+impl<Data> DirectedGraph<&Data>
+where
+    Data: Clone,
+{
+    pub fn cloned(self) -> DirectedGraph<Data> {
+        let nodes: HashMap<NodeId, Data> = self
+            .nodes
+            .iter()
+            .map(|(key, &value)| (key.clone(), value.clone()))
+            .collect();
+        let parents = self.parents;
+        let children = self.children;
+        let n_edges = self.n_edges;
+        DirectedGraph {
+            nodes,
+            parents,
+            children,
+            n_edges,
+        }
+    }
+}
+
 impl<Data> DirectedGraph<Data> {
     pub fn new() -> Self {
         DirectedGraph {
@@ -334,6 +356,93 @@ impl<Data> DirectedGraph<Data> {
 
         Ok(leaves)
     }
+
+    pub fn get_roots(&self) -> Vec<NodeId> {
+        let mut leaves = self
+            .node_ids()
+            .filter(|node_id| {
+                !self
+                    .has_parents(node_id)
+                    .expect("Using nodes from the graph directly")
+            })
+            .collect::<Vec<_>>();
+
+        leaves.sort_unstable();
+
+        leaves
+    }
+
+    pub fn get_roots_over(&self, nodes: &[impl AsRef<str>]) -> GraphInteractionResult<Vec<NodeId>> {
+        let mut roots = Vec::new();
+        let mut visited = HashSet::new();
+        let mut to_visit = nodes
+            .iter()
+            .map(|node| self.get_node_id(node.as_ref()))
+            .collect::<GraphInteractionResult<Vec<_>>>()?;
+
+        while let Some(node) = to_visit.pop() {
+            if visited.contains(&node) {
+                continue;
+            }
+            visited.insert(node.clone());
+            if self.has_parents(&node)?.not() {
+                roots.push(node);
+                continue;
+            }
+            self.parents(&node)?
+                .iter()
+                .for_each(|parent| to_visit.push(parent.clone()));
+        }
+
+        Ok(roots)
+    }
+
+    /// Private, do not use outside
+    fn subset_recursive<'a, 'b>(
+        &'a self,
+        parent: Option<&str>,
+        node_id: impl AsRef<str>,
+        new_dg: &'b mut DirectedGraph<&'a Data>,
+        visited: &'b mut HashSet<NodeId>,
+    ) -> GraphInteractionResult<()>
+    where
+        'a: 'b,
+    {
+        let node_id = node_id.as_ref();
+
+        let node = self.get_node(node_id)?;
+
+        if visited.contains(node_id) {
+            return Ok(());
+        }
+
+        visited.insert(node.id());
+
+        new_dg
+            .add_node(node.id(), node.data())
+            .expect("Nodes cannot de duplicated");
+
+        for child in self.children(node_id)?.iter() {
+            self.subset_recursive(Some(node_id), child, new_dg, visited)?;
+        }
+
+        if let Some(parent) = parent {
+            new_dg.add_edge(parent, node_id)?;
+        }
+
+        Ok(())
+    }
+
+    /// Returns a new tree that is the subset of of all children under a
+    /// node.
+    pub fn subset(&self, node_id: impl AsRef<str>) -> GraphInteractionResult<DirectedGraph<&Data>> {
+        let mut new_dg = DirectedGraph::new();
+        let mut visited = HashSet::new();
+
+        self.subset_recursive(None, node_id.as_ref(), &mut new_dg, &mut visited)?;
+
+        Ok(new_dg)
+    }
 }
 
 impl<Data> Default for DirectedGraph<Data> {
@@ -550,5 +659,26 @@ mod tests {
         let _ = graph.add_edge("3", "5");
 
         assert_eq!(graph.get_leaves(), vec!["4", "5"]);
+    }
+
+    #[test]
+    fn test_subset_tree_no_cycles() {
+        let mut graph = DirectedGraph::<()>::new();
+        let _ = graph.add_node("0", ());
+        let _ = graph.add_node("1", ());
+        let _ = graph.add_node("2", ());
+        let _ = graph.add_node("3", ());
+        let _ = graph.add_node("4", ());
+        let _ = graph.add_node("5", ());
+        let _ = graph.add_edge("0", "1");
+        let _ = graph.add_edge("1", "2");
+        let _ = graph.add_edge("2", "3");
+        let _ = graph.add_edge("3", "4");
+        let _ = graph.add_edge("0", "4");
+        let _ = graph.add_edge("3", "5");
+
+        let subset_graph = graph.subset("1").unwrap();
+
+        assert_eq!(subset_graph.get_leaves(), vec!["4", "5"]);
     }
 }
