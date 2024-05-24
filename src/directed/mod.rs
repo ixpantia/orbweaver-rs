@@ -413,6 +413,9 @@ impl<Data> DirectedGraph<Data> {
         let node = self.get_node(node_id)?;
 
         if visited.contains(node_id) {
+            if let Some(parent) = parent {
+                new_dg.add_edge(parent, node_id)?;
+            }
             return Ok(());
         }
 
