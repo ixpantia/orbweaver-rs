@@ -23,6 +23,20 @@ where
     }
 }
 
+impl<Data> DirectedAcyclicGraph<&Data>
+where
+    Data: Clone,
+{
+    pub fn cloned(self) -> DirectedAcyclicGraph<Data> {
+        let dg = Box::new(self.dg.cloned());
+        let topological_sort = self.topological_sort;
+        DirectedAcyclicGraph {
+            dg,
+            topological_sort,
+        }
+    }
+}
+
 impl<Data> DirectedAcyclicGraph<Data> {
     pub fn build(dg: DirectedGraph<Data>) -> Result<DirectedAcyclicGraph<Data>, GraphHasCycle> {
         let topological_sort = topological_sort::<Data>(&dg)?;
@@ -124,6 +138,14 @@ impl<Data> DirectedAcyclicGraph<Data> {
         dfs(self, start_id, goal_id, &mut current_path, &mut all_paths);
 
         Ok(all_paths)
+    }
+
+    pub fn subset(
+        &self,
+        node_id: impl AsRef<str>,
+    ) -> GraphInteractionResult<DirectedAcyclicGraph<&Data>> {
+        let subset_dg = self.dg.subset(node_id)?;
+        Ok(DirectedAcyclicGraph::build(subset_dg).expect("A subset of a DAG has no cycles"))
     }
 }
 
@@ -236,5 +258,28 @@ mod tests {
         assert_eq!(paths.len(), 2);
         assert_eq!(paths[0].len(), 5);
         assert_eq!(paths[1].len(), 2);
+    }
+
+    #[test]
+    fn test_subset_tree_acyclic() {
+        let mut graph = DirectedGraph::<()>::new();
+        let _ = graph.add_node("0", ());
+        let _ = graph.add_node("1", ());
+        let _ = graph.add_node("2", ());
+        let _ = graph.add_node("3", ());
+        let _ = graph.add_node("4", ());
+        let _ = graph.add_node("5", ());
+        let _ = graph.add_edge("0", "1");
+        let _ = graph.add_edge("1", "2");
+        let _ = graph.add_edge("2", "3");
+        let _ = graph.add_edge("3", "4");
+        let _ = graph.add_edge("0", "4");
+        let _ = graph.add_edge("3", "5");
+
+        let graph = DirectedAcyclicGraph::build(graph).unwrap();
+
+        let subset_graph = graph.subset("1").unwrap();
+
+        assert_eq!(subset_graph.get_leaves(), vec!["4", "5"]);
     }
 }
