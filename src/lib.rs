@@ -158,6 +158,10 @@ impl<Data> Node<Data> {
     pub fn data(&self) -> &Data {
         &self.data
     }
+    #[inline(always)]
+    pub fn data_mut(&mut self) -> &mut Data {
+        &mut self.data
+    }
 }
 
 impl<Data> Node<&Data>
