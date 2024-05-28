@@ -55,9 +55,11 @@ impl<Data> DirectedGraph<Data> {
             n_edges: 0,
         }
     }
+
     pub fn n_nodes(&self) -> usize {
         self.nodes.len()
     }
+
     pub fn add_node(
         &mut self,
         id: impl AsRef<str>,
@@ -74,12 +76,28 @@ impl<Data> DirectedGraph<Data> {
             }
         }
     }
+
+    pub fn update_node_data(
+        &mut self,
+        id: impl AsRef<str>,
+        mut data: Data,
+    ) -> GraphInteractionResult<Data> {
+        match self.nodes.get_mut(id.as_ref()) {
+            Some(node_data) => {
+                std::mem::swap(&mut data, node_data);
+                Ok(data)
+            }
+            None => Err(GraphInteractionError::node_not_exists(id)),
+        }
+    }
+
     pub fn get_node(&self, id: impl AsRef<str>) -> GraphInteractionResult<Node<&Data>> {
         if let Some((node_id, data)) = self.nodes.get_key_value(id.as_ref()) {
             return Ok(Node::new(node_id.clone(), data));
         }
         Err(GraphInteractionError::node_not_exists(id))
     }
+
     pub fn get_nodes(
         &self,
         ids: impl Iterator<Item = impl AsRef<str>>,
