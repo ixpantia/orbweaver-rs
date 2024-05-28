@@ -147,6 +147,14 @@ impl<Data> DirectedAcyclicGraph<Data> {
         let subset_dg = self.dg.subset(node_id)?;
         Ok(DirectedAcyclicGraph::build(subset_dg).expect("A subset of a DAG has no cycles"))
     }
+
+    pub fn update_node_data(
+        &mut self,
+        id: impl AsRef<str>,
+        data: Data,
+    ) -> GraphInteractionResult<Data> {
+        self.dg.update_node_data(id, data)
+    }
 }
 
 impl<Data> Deref for DirectedAcyclicGraph<Data> {
