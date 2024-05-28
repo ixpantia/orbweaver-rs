@@ -100,22 +100,24 @@ impl<Data> DirectedGraph<Data> {
         let from = self.get_node_id(&from)?;
         let to = self.get_node_id(&to)?;
         self.children
-            .get_mut(&from)
-            .expect("Node must exist")
+            .entry(from.clone())
+            .or_default()
             .insert(to.clone());
         self.parents
-            .get_mut(&to)
-            .expect("Node must exist")
+            .entry(to.clone())
+            .or_default()
             .insert(from.clone());
         self.n_edges += 1;
         Ok(self)
     }
 
     pub fn add_path(&mut self, path: &[impl AsRef<str>]) -> GraphInteractionResult<&mut Self> {
-        for edge in path.windows(2) {
-            let from = unsafe { edge.get_unchecked(0) };
-            let to = unsafe { edge.get_unchecked(1) };
-            self.add_edge(from, to)?;
+        if path.len() > 0 {
+            for edge in path.windows(2) {
+                let from = unsafe { edge.get_unchecked(0) };
+                let to = unsafe { edge.get_unchecked(1) };
+                self.add_edge(from, to)?;
+            }
         }
         Ok(self)
     }
