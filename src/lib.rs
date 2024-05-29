@@ -1,10 +1,10 @@
 use lasso::Spur;
 use serde::{Deserialize, Serialize};
 
-
 pub mod acyclic;
 pub mod directed;
 pub mod error;
+pub mod nodeset;
 
 /// Prelude of data types and functionality.
 pub mod prelude {
@@ -72,18 +72,12 @@ impl<Data> Graph<Data> {
 
 #[derive(Ord, PartialOrd, Eq, PartialEq, Debug, Hash, Clone, Copy)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub struct NodeId(Spur);
+pub struct NodeId(pub i32);
 
 impl std::fmt::Display for NodeId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let internal = self.0.into_inner();
+        let internal = self.0;
         write!(f, "NodeId({})", internal)
-    }
-}
-
-impl<'a> From<&'a NodeId> for &'a Spur {
-    fn from(val: &'a NodeId) -> Self {
-        &val.0
     }
 }
 
@@ -134,79 +128,5 @@ where
             data: self.data.clone(),
             node_id: self.node_id.clone(),
         }
-    }
-}
-
-pub struct NodeIdSet<Iter>
-where
-    Iter: Iterator<Item = NodeId>,
-{
-    iterator: Iter,
-}
-
-impl<Iter> NodeIdSet<Iter>
-where
-    Iter: Iterator<Item = NodeId>,
-{
-    pub(crate) fn new(iter: impl IntoIterator<IntoIter = Iter>) -> Self {
-        let iterator = iter.into_iter();
-        Self { iterator }
-    }
-}
-
-struct NodeSet<Id, Data> {
-    ids: Vec<Id>,
-    data: Vec<Data>,
-    len: usize,
-}
-
-impl<Id, Data> NodeSet<Id, Data> {
-    pub fn is_empty(&self) -> bool {
-        self.len == 0
-    }
-    pub fn from_single(node: Node<Id, Data>) -> Self {
-        [node].into_iter().collect()
-    }
-}
-
-impl<Id, Data> FromIterator<Node<Id, Data>> for NodeSet<Id, Data> {
-    fn from_iter<T: IntoIterator<Item = Node<Id, Data>>>(iter: T) -> Self {
-        let mut ids = Vec::new();
-        let mut data = Vec::new();
-        iter.into_iter().for_each(|node| {
-            ids.push(node.node_id);
-            data.push(node.data);
-        });
-        let len = ids.len();
-        NodeSet { ids, data, len }
-    }
-}
-
-impl<'a, Data> IntoIterator for NodeSet<&'a str, Data> {
-    type Item = Node<&'a str, Data>;
-    type IntoIter = NodeIter<&'a str, Data>;
-    fn into_iter(self) -> Self::IntoIter {
-        NodeIter {
-            node_set: self,
-            curr: 0,
-        }
-    }
-}
-
-struct NodeIter<Id, Data> {
-    node_set: NodeSet<Id, Data>,
-    curr: usize,
-}
-
-impl<'a, Data> Iterator for NodeIter<&'a str, Data> {
-    type Item = Node<&'a str, Data>;
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.curr == self.node_set.len {
-            return None;
-        }
-        let node_id = self.node_set.ids[self.curr];
-        let data = unsafe { (&self.node_set.data[self.curr] as *const Data).read() };
-        self.curr += 1;
-        Some(Node { node_id, data })
     }
 }

@@ -4,11 +4,8 @@ pub fn topological_sort<Data>(dg: &DirectedGraph<Data>) -> Result<Vec<NodeId>, G
     let mut dg = dg.into_dataless();
     let mut res = Vec::new();
     let mut no_deps = dg.get_leaves();
-    println!("{:?}", no_deps);
 
     while let Some(node) = no_deps.pop() {
-        println!("{} --- {}", node, dg.n_edges);
-        println!("{:?}", dg.parents(node));
         res.push(node);
 
         if let Ok(parents) = dg.parents(node) {

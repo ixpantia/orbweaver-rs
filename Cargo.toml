@@ -12,6 +12,7 @@ readme = "README.md"
 
 [dependencies]
 lasso = { version = "0.7.2", features = ["serde", "serialize"] }
+rand = "0.8.5"
 serde = { version = "1.0.202", features = ["derive", "rc"], optional = true }
 
 [features]

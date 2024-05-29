@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use crate::nodeset::NodeSet;
 use crate::{prelude::GraphInteractionError as GIE, prelude::*};
 use lasso::{Rodeo, Spur};
 use std::collections::hash_map::Entry;
@@ -9,8 +10,7 @@ use std::ops::Not;
 #[derive(Debug)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct DirectedGraph<Data> {
-    pub(crate) rodeo: Rodeo,
-    pub(crate) nodes: HashMap<NodeId, Data>,
+    pub(crate) nodes: crate::nodeset::NodeSet<Data>,
     pub(crate) parents: HashMap<NodeId, HashSet<NodeId>>,
     pub(crate) children: HashMap<NodeId, HashSet<NodeId>>,
     pub(crate) n_edges: usize,
@@ -19,8 +19,7 @@ pub struct DirectedGraph<Data> {
 impl<Data: Clone> Clone for DirectedGraph<Data> {
     fn clone(&self) -> Self {
         DirectedGraph {
-            rodeo: Rodeo::clone(&self.rodeo),
-            nodes: HashMap::clone(&self.nodes),
+            nodes: NodeSet::clone(&self.nodes),
             parents: HashMap::clone(&self.parents),
             children: HashMap::clone(&self.children),
             n_edges: self.n_edges,
@@ -33,17 +32,11 @@ where
     Data: Clone,
 {
     pub fn cloned(self) -> DirectedGraph<Data> {
-        let nodes: HashMap<NodeId, Data> = self
-            .nodes
-            .iter()
-            .map(|(key, &value)| (*key, value.clone()))
-            .collect();
+        let nodes = self.nodes.cloned();
         let parents = self.parents;
         let children = self.children;
         let n_edges = self.n_edges;
-        let rodeo = self.rodeo;
         DirectedGraph {
-            rodeo,
             nodes,
             parents,
             children,
@@ -55,18 +48,10 @@ where
 impl<Data> DirectedGraph<Data> {
     pub fn new() -> Self {
         DirectedGraph {
-            rodeo: Rodeo::new(),
-            nodes: HashMap::new(),
+            nodes: NodeSet::new(),
             parents: HashMap::new(),
             children: HashMap::new(),
             n_edges: 0,
-        }
-    }
-
-    pub(crate) fn get_spur(&self, id: impl AsRef<str>) -> GraphInteractionResult<Spur> {
-        match self.rodeo.get(id) {
-            None => Err(GIE::NodeNotExist),
-            Some(spur) => Ok(spur),
         }
     }
 
@@ -75,12 +60,7 @@ impl<Data> DirectedGraph<Data> {
     }
 
     pub fn add_node(&mut self, id: impl AsRef<str>, data: Data) -> Result<NodeId, DuplicateNode> {
-        let node_id = NodeId(self.rodeo.get_or_intern(id.as_ref()));
-
-        match self.nodes.entry(node_id) {
-            Entry::Occupied(_) => return Err(DuplicateNode::new(id)),
-            Entry::Vacant(entry) => entry.insert(data),
-        };
+        let node_id = self.nodes.add_node(id.as_ref(), data)?;
         self.children.entry(node_id).or_default();
         self.parents.entry(node_id).or_default();
         Ok(node_id)
@@ -91,7 +71,7 @@ impl<Data> DirectedGraph<Data> {
         node_id: NodeId,
         mut data: Data,
     ) -> GraphInteractionResult<Data> {
-        if let Some(node_data) = self.nodes.get_mut(&node_id) {
+        if let Some(node_data) = self.nodes.get_data_mut(node_id) {
             std::mem::swap(node_data, &mut data);
         }
 
@@ -99,17 +79,14 @@ impl<Data> DirectedGraph<Data> {
     }
 
     pub fn get_node(&self, node_id: NodeId) -> GraphInteractionResult<Node<&str, &Data>> {
-        if let Some((node_id, data)) = self.nodes.get_key_value(&node_id) {
-            return Ok(Node::new(self.rodeo.resolve(node_id.into()), data));
+        if let Some((node_hrid, data)) = self.nodes.get_key_value(node_id) {
+            return Ok(Node::new(node_hrid, data));
         }
         Err(GIE::NodeNotExist)
     }
 
     pub fn id(&self, hrid: impl AsRef<str>) -> GraphInteractionResult<NodeId> {
-        self.rodeo
-            .get(hrid.as_ref())
-            .map(NodeId)
-            .ok_or(GIE::NodeNotExist)
+        self.nodes.get_id(hrid.as_ref()).ok_or(GIE::NodeNotExist)
     }
 
     pub fn ids(
@@ -119,11 +96,6 @@ impl<Data> DirectedGraph<Data> {
         hrid.into_iter()
             .map(|hrid| self.id(hrid.as_ref()))
             .collect()
-    }
-
-    pub(crate) fn get_node_by_spur_unchecked(&self, node_id: NodeId) -> Node<&str, &Data> {
-        let (node_id, data) = self.nodes.get_key_value(&node_id).unwrap();
-        Node::new(self.rodeo.resolve(node_id.into()), data)
     }
 
     pub fn get_nodes(
@@ -210,7 +182,7 @@ impl<Data> DirectedGraph<Data> {
             self.children.remove(&node_id);
         }
 
-        self.nodes.remove(&node_id);
+        self.nodes.remove_node(node_id);
 
         self
     }
@@ -232,14 +204,12 @@ impl<Data> DirectedGraph<Data> {
     }
 
     pub fn nodes(&self) -> Vec<NodeId> {
-        self.nodes.keys().copied().collect()
+        self.nodes.node_ids().collect()
     }
 
     pub fn into_dataless(&self) -> DirectedGraph<()> {
-        let nodes = self.nodes.keys().map(|node_id| (*node_id, ())).collect();
         DirectedGraph {
-            nodes,
-            rodeo: self.rodeo.clone(),
+            nodes: self.nodes.into_dataless(),
             parents: self.parents.clone(),
             children: self.children.clone(),
             n_edges: self.n_edges,
@@ -342,14 +312,14 @@ impl<Data> DirectedGraph<Data> {
     pub fn get_leaves(&self) -> Vec<NodeId> {
         let mut leaves = self
             .nodes
-            .keys()
+            .node_ids()
             .filter(|node_id| {
-                self.children
+                !self
+                    .children
                     .get(node_id)
-                    .map(|c| c.is_empty())
+                    .map(|c| !c.is_empty())
                     .unwrap_or_default()
             })
-            .cloned()
             .collect::<Vec<_>>();
 
         leaves.sort_unstable();
@@ -388,14 +358,14 @@ impl<Data> DirectedGraph<Data> {
     pub fn get_roots(&self) -> Vec<NodeId> {
         let mut roots = self
             .nodes
-            .keys()
+            .node_ids()
             .filter(|node_id| {
-                self.parents
+                !self
+                    .parents
                     .get(node_id)
-                    .map(|p| p.is_empty())
+                    .map(|p| !p.is_empty())
                     .unwrap_or_default()
             })
-            .cloned()
             .collect::<Vec<_>>();
 
         roots.sort_unstable();
@@ -437,10 +407,7 @@ impl<Data> DirectedGraph<Data> {
         node_id: NodeId,
         new_dg: &'b mut DirectedGraph<&'a Data>,
         visited: &'b mut HashSet<NodeId>,
-    ) -> GraphInteractionResult<()>
-    where
-        'a: 'b,
-    {
+    ) -> GraphInteractionResult<()> {
         let node = self.get_node(node_id)?;
 
         if visited.contains(&node_id) {
@@ -453,8 +420,8 @@ impl<Data> DirectedGraph<Data> {
         visited.insert(node_id);
 
         new_dg
-            .add_node(node.id(), node.data())
-            .expect("Nodes cannot de duplicated");
+            .nodes
+            .add_entry_unchecked(node.node_id, node_id, node.data);
 
         for child in self.children(node_id)? {
             self.subset_recursive(Some(node_id), child, new_dg, visited)?;
@@ -471,7 +438,6 @@ impl<Data> DirectedGraph<Data> {
     /// node.
     pub fn subset(&self, node_id: NodeId) -> GraphInteractionResult<DirectedGraph<&Data>> {
         let mut new_dg = DirectedGraph::new();
-        new_dg.rodeo = self.rodeo.clone();
         let mut visited = HashSet::new();
 
         self.subset_recursive(None, node_id, &mut new_dg, &mut visited)?;
@@ -725,7 +691,6 @@ mod tests {
         let _ = graph.add_edge(id_3, id_5);
 
         let subset_graph = graph.subset(id_1)?;
-
         assert_eq!(subset_graph.get_leaves(), vec![id_4, id_5]);
         Ok(())
     }
