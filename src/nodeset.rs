@@ -1,10 +1,10 @@
 use rand::{Rng, RngCore};
-use std::num::NonZeroI32;
+use std::{collections::HashSet, num::NonZeroI32};
 
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    prelude::{DuplicateNode, GraphInteractionResult},
+    prelude::{DuplicateNode, GraphInteractionError, GraphInteractionResult},
     NodeId,
 };
 
@@ -72,10 +72,38 @@ impl<Data> NodeSet<Data> {
             self.data.swap_remove(index);
         }
     }
+
     pub fn get_data_mut(&mut self, node_id: NodeId) -> Option<&mut Data> {
         self.get_index(node_id)
             .map(|i| unsafe { self.data.get_unchecked_mut(i) })
     }
+
+    pub fn get_data(&self, node_id: NodeId) -> Option<&Data> {
+        self.get_index(node_id)
+            .map(|i| unsafe { self.data.get_unchecked(i) })
+    }
+
+    pub fn select_nodes(
+        &self,
+        node_ids: impl IntoIterator<Item = NodeId>,
+    ) -> GraphInteractionResult<NodeSet<&Data>> {
+        let node_ids: HashSet<_> = node_ids.into_iter().collect();
+        let mut ids = Vec::new();
+        let mut hrids = Vec::new();
+        let mut data = Vec::new();
+        for (index, node_id) in self.ids.iter().enumerate() {
+            if node_ids.contains(node_id) {
+                data.push(unsafe { self.data.get_unchecked(index) });
+                hrids.push(unsafe { self.hrids.get_unchecked(index) }.clone());
+                ids.push(*unsafe { self.ids.get_unchecked(index) });
+            }
+        }
+        if data.len() != node_ids.len() {
+            return Err(GraphInteractionError::NodeNotExist);
+        }
+        Ok(NodeSet { ids, hrids, data })
+    }
+
     pub fn get_key_value(&self, node_id: NodeId) -> Option<(&str, &Data)> {
         self.get_index(node_id).map(|i| {
             let node_hrid = unsafe { self.hrids.get_unchecked(i) };
