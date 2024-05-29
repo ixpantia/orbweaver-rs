@@ -55,12 +55,11 @@ impl<Data> DirectedGraph<Data> {
         }
     }
 
-    /// Gets a clone of the nodeset
-    pub fn nodeset(&self) -> NodeSet<Data>
+    pub fn nodeset(&self) -> &NodeSet<Data>
     where
         Data: Clone,
     {
-        self.nodes.clone()
+        &self.nodes
     }
 
     pub fn n_nodes(&self) -> usize {
