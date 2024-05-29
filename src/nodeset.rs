@@ -104,6 +104,30 @@ impl<Data> NodeSet<Data> {
         Ok(NodeSet { ids, hrids, data })
     }
 
+    pub fn select_nodes_cloned(
+        &self,
+        node_ids: impl IntoIterator<Item = NodeId>,
+    ) -> GraphInteractionResult<NodeSet<Data>>
+    where
+        Data: Clone,
+    {
+        let node_ids: HashSet<_> = node_ids.into_iter().collect();
+        let mut ids = Vec::new();
+        let mut hrids = Vec::new();
+        let mut data = Vec::new();
+        for (index, node_id) in self.ids.iter().enumerate() {
+            if node_ids.contains(node_id) {
+                data.push(unsafe { self.data.get_unchecked(index) }.clone());
+                hrids.push(unsafe { self.hrids.get_unchecked(index) }.clone());
+                ids.push(*unsafe { self.ids.get_unchecked(index) });
+            }
+        }
+        if data.len() != node_ids.len() {
+            return Err(GraphInteractionError::NodeNotExist);
+        }
+        Ok(NodeSet { ids, hrids, data })
+    }
+
     pub fn get_key_value(&self, node_id: NodeId) -> Option<(&str, &Data)> {
         self.get_index(node_id).map(|i| {
             let node_hrid = unsafe { self.hrids.get_unchecked(i) };
