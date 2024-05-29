@@ -130,3 +130,35 @@ where
         }
     }
 }
+
+#[cfg(test)]
+pub mod test_utils {
+    pub fn sort<T>(mut x: Vec<T>) -> Vec<T>
+    where
+        T: Ord,
+    {
+        x.sort_unstable();
+        x
+    }
+
+    pub fn sort_by_len<T>(mut x: Vec<Vec<T>>) -> Vec<Vec<T>>
+    where
+        T: Ord,
+    {
+        x.sort_unstable_by_key(|x| x.len());
+        x
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn transmute_vec_node_id_to_i32() {
+        let vec_node = vec![NodeId(1), NodeId(999), NodeId(1235)];
+        let vec_i32: Vec<i32> = unsafe { std::mem::transmute(vec_node) };
+        let vec_i32_expected = vec![1, 999, 1235];
+        assert_eq!(vec_i32, vec_i32_expected);
+    }
+}

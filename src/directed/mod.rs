@@ -454,6 +454,8 @@ impl<Data> Default for DirectedGraph<Data> {
 
 #[cfg(test)]
 mod tests {
+    use crate::test_utils::sort;
+
     use super::*;
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -575,7 +577,7 @@ mod tests {
 
         assert_eq!(
             graph.least_common_parents([id_0, id_1, id_3]).unwrap(),
-            vec![id_0, id_3]
+            sort(vec![id_0, id_3])
         );
         Ok(())
     }
@@ -600,7 +602,7 @@ mod tests {
 
         assert_eq!(
             graph.least_common_parents([id_0, id_1, id_2])?,
-            vec![id_0, id_2]
+            sort(vec![id_0, id_2])
         );
         Ok(())
     }
@@ -670,7 +672,7 @@ mod tests {
         let _ = graph.add_edge(id_0, id_4);
         let _ = graph.add_edge(id_3, id_5);
 
-        assert_eq!(graph.get_leaves(), vec![id_4, id_5]);
+        assert_eq!(graph.get_leaves(), sort(vec![id_4, id_5]));
         Ok(())
     }
 
@@ -691,7 +693,8 @@ mod tests {
         let _ = graph.add_edge(id_3, id_5);
 
         let subset_graph = graph.subset(id_1)?;
-        assert_eq!(subset_graph.get_leaves(), vec![id_4, id_5]);
+
+        assert_eq!(subset_graph.get_leaves(), sort(vec![id_4, id_5]));
         Ok(())
     }
 }

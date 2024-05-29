@@ -24,6 +24,10 @@ impl<Data> NodeSet<Data> {
         }
     }
 
+    pub fn into_parts(self) -> (Vec<NodeId>, Vec<String>, Vec<Data>) {
+        (self.ids, self.hrids, self.data)
+    }
+
     pub fn len(&self) -> usize {
         self.ids.len()
     }

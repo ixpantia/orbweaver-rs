@@ -112,13 +112,7 @@ impl<Data> DirectedAcyclicGraph<Data> {
             } else {
                 // Continue to next nodes that can be visited from the current node
                 for child in graph.children(current).expect("Node must exist") {
-                    dfs(
-                        graph,
-                        child,
-                        goal_id,
-                        current_path,
-                        all_paths,
-                    );
+                    dfs(graph, child, goal_id, current_path, all_paths);
                 }
             }
 
@@ -158,6 +152,8 @@ impl<Data> Deref for DirectedAcyclicGraph<Data> {
 
 #[cfg(test)]
 mod tests {
+    use crate::test_utils::{sort, sort_by_len};
+
     use super::*;
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -256,14 +252,12 @@ mod tests {
 
         let graph = DirectedAcyclicGraph::build(graph)?;
 
-        let mut paths = graph.find_all_paths(id_0, id_4)?;
-        println!("{paths:?}");
-
-        paths.sort_unstable();
+        let paths = sort_by_len(graph.find_all_paths(id_0, id_4)?);
 
         assert_eq!(paths.len(), 2);
-        assert_eq!(paths[0].len(), 5);
-        assert_eq!(paths[1].len(), 2);
+        assert_eq!(paths[0].len(), 2);
+        assert_eq!(paths[1].len(), 5);
+
         Ok(())
     }
 
@@ -287,7 +281,7 @@ mod tests {
 
         let subset_graph = graph.subset(id_1)?;
 
-        assert_eq!(subset_graph.get_leaves(), vec![id_4, id_5]);
+        assert_eq!(subset_graph.get_leaves(), sort(vec![id_4, id_5]));
         Ok(())
     }
 }
