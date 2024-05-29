@@ -1,5 +1,6 @@
+use lasso::Spur;
 use serde::{Deserialize, Serialize};
-use std::{ops::Deref, rc::Rc};
+
 
 pub mod acyclic;
 pub mod directed;
@@ -69,90 +70,36 @@ impl<Data> Graph<Data> {
     }
 }
 
-#[derive(Ord, PartialOrd, Eq, PartialEq, Debug, Hash)]
+#[derive(Ord, PartialOrd, Eq, PartialEq, Debug, Hash, Clone, Copy)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub struct NodeId(Rc<str>);
+pub struct NodeId(Spur);
 
 impl std::fmt::Display for NodeId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.as_ref())
+        let internal = self.0.into_inner();
+        write!(f, "NodeId({})", internal)
     }
 }
 
-impl AsRef<str> for NodeId {
-    fn as_ref(&self) -> &str {
-        self.0.as_ref()
+impl<'a> From<&'a NodeId> for &'a Spur {
+    fn from(val: &'a NodeId) -> Self {
+        &val.0
     }
 }
 
-impl std::borrow::Borrow<str> for NodeId {
-    fn borrow(&self) -> &str {
-        self.as_ref()
-    }
-}
-
-impl From<NodeId> for String {
-    fn from(value: NodeId) -> Self {
-        value.as_ref().to_string()
-    }
-}
-
-impl From<&NodeId> for String {
-    fn from(value: &NodeId) -> Self {
-        value.as_ref().to_string()
-    }
-}
-
-impl std::cmp::PartialEq<str> for NodeId {
-    fn eq(&self, other: &str) -> bool {
-        self.0.as_ref().eq(other)
-    }
-}
-
-impl std::cmp::PartialEq<&str> for NodeId {
-    fn eq(&self, other: &&str) -> bool {
-        self.0.as_ref().eq(*other)
-    }
-}
-
-impl std::cmp::PartialOrd<str> for NodeId {
-    fn partial_cmp(&self, other: &str) -> Option<std::cmp::Ordering> {
-        self.0.as_ref().partial_cmp(other)
-    }
-}
-
-impl From<&str> for NodeId {
-    fn from(value: &str) -> Self {
-        NodeId(Rc::from(value))
-    }
-}
-
-impl Clone for NodeId {
-    fn clone(&self) -> Self {
-        NodeId(Rc::clone(&self.0))
-    }
-}
-
-impl Deref for NodeId {
-    type Target = str;
-    fn deref(&self) -> &Self::Target {
-        self.0.as_ref()
-    }
-}
-
-pub struct Node<Data> {
-    node_id: NodeId,
+pub struct Node<Id, Data> {
+    node_id: Id,
     data: Data,
 }
 
-impl<Data> Node<Data> {
+impl<'a, Data> Node<&'a str, Data> {
     #[inline(always)]
-    fn new(node_id: NodeId, data: Data) -> Self {
+    fn new(node_id: &'a str, data: Data) -> Self {
         Node { node_id, data }
     }
     #[inline(always)]
-    pub fn id(&self) -> NodeId {
-        self.node_id.clone()
+    pub fn id(&self) -> &'a str {
+        self.node_id
     }
     #[inline(always)]
     pub fn data(&self) -> &Data {
@@ -164,27 +111,102 @@ impl<Data> Node<Data> {
     }
 }
 
-impl<Data> Node<&Data>
+impl<'a, Data> Node<&'a str, &Data>
 where
     Data: Clone,
 {
     #[inline(always)]
-    pub fn cloned(self) -> Node<Data> {
+    pub fn cloned(self) -> Node<Box<str>, Data> {
         Node {
             data: self.data.clone(),
-            node_id: self.node_id,
+            node_id: self.node_id.into(),
         }
     }
 }
 
-impl<Data> Clone for Node<Data>
+impl<Id, Data> Clone for Node<Id, Data>
 where
     Data: Clone,
+    Id: Clone,
 {
     fn clone(&self) -> Self {
         Node {
             data: self.data.clone(),
             node_id: self.node_id.clone(),
         }
+    }
+}
+
+pub struct NodeIdSet<Iter>
+where
+    Iter: Iterator<Item = NodeId>,
+{
+    iterator: Iter,
+}
+
+impl<Iter> NodeIdSet<Iter>
+where
+    Iter: Iterator<Item = NodeId>,
+{
+    pub(crate) fn new(iter: impl IntoIterator<IntoIter = Iter>) -> Self {
+        let iterator = iter.into_iter();
+        Self { iterator }
+    }
+}
+
+struct NodeSet<Id, Data> {
+    ids: Vec<Id>,
+    data: Vec<Data>,
+    len: usize,
+}
+
+impl<Id, Data> NodeSet<Id, Data> {
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+    pub fn from_single(node: Node<Id, Data>) -> Self {
+        [node].into_iter().collect()
+    }
+}
+
+impl<Id, Data> FromIterator<Node<Id, Data>> for NodeSet<Id, Data> {
+    fn from_iter<T: IntoIterator<Item = Node<Id, Data>>>(iter: T) -> Self {
+        let mut ids = Vec::new();
+        let mut data = Vec::new();
+        iter.into_iter().for_each(|node| {
+            ids.push(node.node_id);
+            data.push(node.data);
+        });
+        let len = ids.len();
+        NodeSet { ids, data, len }
+    }
+}
+
+impl<'a, Data> IntoIterator for NodeSet<&'a str, Data> {
+    type Item = Node<&'a str, Data>;
+    type IntoIter = NodeIter<&'a str, Data>;
+    fn into_iter(self) -> Self::IntoIter {
+        NodeIter {
+            node_set: self,
+            curr: 0,
+        }
+    }
+}
+
+struct NodeIter<Id, Data> {
+    node_set: NodeSet<Id, Data>,
+    curr: usize,
+}
+
+impl<'a, Data> Iterator for NodeIter<&'a str, Data> {
+    type Item = Node<&'a str, Data>;
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.curr == self.node_set.len {
+            return None;
+        }
+        let node_id = self.node_set.ids[self.curr];
+        let data = unsafe { (&self.node_set.data[self.curr] as *const Data).read() };
+        self.curr += 1;
+        Some(Node { node_id, data })
     }
 }

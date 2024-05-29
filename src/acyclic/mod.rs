@@ -51,38 +51,36 @@ impl<Data> DirectedAcyclicGraph<Data> {
     /// Finds path using topological sort
     pub fn find_path(
         &self,
-        from: impl AsRef<str>,
-        to: impl AsRef<str>,
+        start_id: NodeId,
+        goal_id: NodeId,
     ) -> GraphInteractionResult<Option<Vec<NodeId>>> {
-        let start_id = self.get_node(&from)?.node_id;
-        let goal_id = self.get_node(&to)?.node_id;
         if start_id == goal_id {
             return Ok(Some(vec![start_id]));
         }
 
         let topo_order = self.topological_sort.as_slice();
-        let start_index = topo_order
+        let start_id_index = topo_order
             .iter()
-            .position(|id| id == &start_id)
+            .position(|&id| id == start_id)
             .expect("Node must be included in topo_order");
-        let goal_index = topo_order
+        let goal_id_index = topo_order
             .iter()
-            .position(|id| id == &goal_id)
+            .position(|&id| id == goal_id)
             .expect("Node must be included in topo_order");
 
-        if goal_index > start_index {
-            return Ok(None); // No path from start to goal in a DAG if start comes after goal in topo order
+        if goal_id_index > start_id_index {
+            return Ok(None); // No path from start_id to goal_id in a DAG if start_id comes after goal_id in topo order
         }
 
         let mut path = Vec::new();
-        let mut current = goal_id.clone();
-        path.push(current.clone());
+        let mut current = goal_id;
+        path.push(current);
 
         // Explore the path using the topological order
-        for node_id in &topo_order[goal_index..=start_index] {
-            if self.edge_exists(node_id, &current) {
-                path.push(node_id.clone());
-                current = node_id.clone();
+        for &node_id in &topo_order[goal_id_index..=start_id_index] {
+            if self.edge_exists(node_id, current) {
+                path.push(node_id);
+                current = node_id;
                 if current == start_id {
                     path.reverse();
                     return Ok(Some(path));
@@ -94,8 +92,8 @@ impl<Data> DirectedAcyclicGraph<Data> {
     }
     pub fn find_all_paths(
         &self,
-        from: impl AsRef<str>,
-        to: impl AsRef<str>,
+        start_id: NodeId,
+        goal_id: NodeId,
     ) -> GraphInteractionResult<Vec<Vec<NodeId>>> {
         // Helper function to perform DFS
         fn dfs<Data>(
@@ -106,18 +104,18 @@ impl<Data> DirectedAcyclicGraph<Data> {
             all_paths: &mut Vec<Vec<NodeId>>,
         ) {
             // Add current node to path
-            current_path.push(current.clone());
+            current_path.push(current);
 
             // Check if the current node is the goal
             if current == goal_id {
                 all_paths.push(current_path.clone());
             } else {
                 // Continue to next nodes that can be visited from the current node
-                for child in graph.children(&current).expect("Node must exist") {
+                for child in graph.children(current).expect("Node must exist") {
                     dfs(
                         graph,
-                        child.clone(),
-                        goal_id.clone(),
+                        child,
+                        goal_id,
                         current_path,
                         all_paths,
                     );
@@ -128,9 +126,6 @@ impl<Data> DirectedAcyclicGraph<Data> {
             current_path.pop();
         }
 
-        let start_id = self.get_node_id(&from)?;
-        let goal_id = self.get_node_id(&to)?;
-
         let mut all_paths = Vec::new();
         let mut current_path = Vec::new();
 
@@ -140,20 +135,17 @@ impl<Data> DirectedAcyclicGraph<Data> {
         Ok(all_paths)
     }
 
-    pub fn subset(
-        &self,
-        node_id: impl AsRef<str>,
-    ) -> GraphInteractionResult<DirectedAcyclicGraph<&Data>> {
+    pub fn subset(&self, node_id: NodeId) -> GraphInteractionResult<DirectedAcyclicGraph<&Data>> {
         let subset_dg = self.dg.subset(node_id)?;
         Ok(DirectedAcyclicGraph::build(subset_dg).expect("A subset of a DAG has no cycles"))
     }
 
     pub fn update_node_data(
         &mut self,
-        id: impl AsRef<str>,
+        node_id: NodeId,
         data: Data,
     ) -> GraphInteractionResult<Data> {
-        self.dg.update_node_data(id, data)
+        self.dg.update_node_data(node_id, data)
     }
 }
 
@@ -168,97 +160,103 @@ impl<Data> Deref for DirectedAcyclicGraph<Data> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_topologically_sort() {
-        let mut graph = DirectedGraph::<()>::new();
-        let _ = graph.add_node("1", ());
-        let _ = graph.add_node("2", ());
-        let _ = graph.add_node("3", ());
-        let _ = graph.add_node("4", ());
-        let _ = graph.add_node("5", ());
-        let _ = graph.add_edge("1", "2");
-        let _ = graph.add_edge("2", "3");
-        let _ = graph.add_edge("3", "4");
-        let _ = graph.add_edge("4", "5");
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
 
-        assert!(topological_sort::<()>(&graph).is_ok());
+    #[test]
+    fn test_topologically_sort() -> TestResult {
+        let mut graph = DirectedGraph::<()>::new();
+        let id_1 = graph.add_node("1", ())?;
+        let id_2 = graph.add_node("2", ())?;
+        let id_3 = graph.add_node("3", ())?;
+        let id_4 = graph.add_node("4", ())?;
+        let id_5 = graph.add_node("5", ())?;
+        let _ = graph.add_edge(id_1, id_2);
+        let _ = graph.add_edge(id_2, id_3);
+        let _ = graph.add_edge(id_3, id_4);
+        let _ = graph.add_edge(id_4, id_5);
+
+        assert!(topological_sort(&graph).is_ok());
+        Ok(())
     }
 
     #[test]
-    fn test_topologically_sort_non_acyclic() {
+    fn test_topologically_sort_non_acyclic() -> TestResult {
         let mut graph = DirectedGraph::<()>::new();
-        let _ = graph.add_node("1", ());
-        let _ = graph.add_node("2", ());
-        let _ = graph.add_node("3", ());
-        let _ = graph.add_node("4", ());
-        let _ = graph.add_node("5", ());
-        let _ = graph.add_edge("1", "2");
-        let _ = graph.add_edge("2", "3");
-        let _ = graph.add_edge("3", "4");
-        let _ = graph.add_edge("4", "5");
-        let _ = graph.add_edge("5", "1");
+        let id_1 = graph.add_node("1", ())?;
+        let id_2 = graph.add_node("2", ())?;
+        let id_3 = graph.add_node("3", ())?;
+        let id_4 = graph.add_node("4", ())?;
+        let id_5 = graph.add_node("5", ())?;
+        let _ = graph.add_edge(id_1, id_2);
+        let _ = graph.add_edge(id_2, id_3);
+        let _ = graph.add_edge(id_3, id_4);
+        let _ = graph.add_edge(id_4, id_5);
+        let _ = graph.add_edge(id_5, id_1);
 
-        assert!(topological_sort::<()>(&graph).is_err());
+        assert!(topological_sort(&graph).is_err());
+        Ok(())
     }
 
     #[test]
-    fn test_find_path_simple() {
+    fn test_find_path_simple() -> TestResult {
         let mut graph = DirectedGraph::<()>::new();
-        let _ = graph.add_node("0", ());
-        let _ = graph.add_node("1", ());
-        let _ = graph.add_node("2", ());
-        let _ = graph.add_node("3", ());
-        let _ = graph.add_node("4", ());
-        let _ = graph.add_edge("0", "1");
-        let _ = graph.add_edge("1", "2");
-        let _ = graph.add_edge("2", "3");
-        let _ = graph.add_edge("3", "4");
+        let id_0 = graph.add_node("0", ())?;
+        let id_1 = graph.add_node("1", ())?;
+        let id_2 = graph.add_node("2", ())?;
+        let id_3 = graph.add_node("3", ())?;
+        let id_4 = graph.add_node("4", ())?;
+        let _ = graph.add_edge(id_0, id_1);
+        let _ = graph.add_edge(id_1, id_2);
+        let _ = graph.add_edge(id_2, id_3);
+        let _ = graph.add_edge(id_3, id_4);
 
-        let graph = DirectedAcyclicGraph::build(graph).unwrap();
+        let graph = DirectedAcyclicGraph::build(graph)?;
 
-        let path = graph.find_path("0", "4").unwrap();
+        let path = graph.find_path(id_0, id_4)?.unwrap();
 
-        assert_eq!(path.unwrap().len(), 5);
+        assert_eq!(path.len(), 5);
+        Ok(())
     }
 
     #[test]
-    fn test_find_path_many_paths() {
+    fn test_find_path_many_paths() -> TestResult {
         let mut graph = DirectedGraph::<()>::new();
-        let _ = graph.add_node("0", ());
-        let _ = graph.add_node("1", ());
-        let _ = graph.add_node("2", ());
-        let _ = graph.add_node("3", ());
-        let _ = graph.add_node("4", ());
-        let _ = graph.add_edge("0", "1");
-        let _ = graph.add_edge("1", "2");
-        let _ = graph.add_edge("2", "3");
-        let _ = graph.add_edge("3", "4");
-        let _ = graph.add_edge("0", "4");
+        let id_0 = graph.add_node("0", ())?;
+        let id_1 = graph.add_node("1", ())?;
+        let id_2 = graph.add_node("2", ())?;
+        let id_3 = graph.add_node("3", ())?;
+        let id_4 = graph.add_node("4", ())?;
+        let _ = graph.add_edge(id_0, id_1);
+        let _ = graph.add_edge(id_1, id_2);
+        let _ = graph.add_edge(id_2, id_3);
+        let _ = graph.add_edge(id_3, id_4);
+        let _ = graph.add_edge(id_0, id_4);
 
-        let graph = DirectedAcyclicGraph::build(graph).unwrap();
+        let graph = DirectedAcyclicGraph::build(graph)?;
 
-        let path = graph.find_path("0", "4").unwrap();
+        let path = graph.find_path(id_0, id_4)?.unwrap();
 
-        assert_eq!(path.unwrap().len(), 5);
+        assert_eq!(path.len(), 5);
+        Ok(())
     }
 
     #[test]
-    fn test_find_all_paths_many_paths() {
+    fn test_find_all_paths_many_paths() -> TestResult {
         let mut graph = DirectedGraph::<()>::new();
-        let _ = graph.add_node("0", ());
-        let _ = graph.add_node("1", ());
-        let _ = graph.add_node("2", ());
-        let _ = graph.add_node("3", ());
-        let _ = graph.add_node("4", ());
-        let _ = graph.add_edge("0", "1");
-        let _ = graph.add_edge("1", "2");
-        let _ = graph.add_edge("2", "3");
-        let _ = graph.add_edge("3", "4");
-        let _ = graph.add_edge("0", "4");
+        let id_0 = graph.add_node("0", ())?;
+        let id_1 = graph.add_node("1", ())?;
+        let id_2 = graph.add_node("2", ())?;
+        let id_3 = graph.add_node("3", ())?;
+        let id_4 = graph.add_node("4", ())?;
+        let _ = graph.add_edge(id_0, id_1);
+        let _ = graph.add_edge(id_1, id_2);
+        let _ = graph.add_edge(id_2, id_3);
+        let _ = graph.add_edge(id_3, id_4);
+        let _ = graph.add_edge(id_0, id_4);
 
-        let graph = DirectedAcyclicGraph::build(graph).unwrap();
+        let graph = DirectedAcyclicGraph::build(graph)?;
 
-        let mut paths = graph.find_all_paths("0", "4").unwrap();
+        let mut paths = graph.find_all_paths(id_0, id_4)?;
         println!("{paths:?}");
 
         paths.sort_unstable();
@@ -266,28 +264,30 @@ mod tests {
         assert_eq!(paths.len(), 2);
         assert_eq!(paths[0].len(), 5);
         assert_eq!(paths[1].len(), 2);
+        Ok(())
     }
 
     #[test]
-    fn test_subset_tree_acyclic() {
+    fn test_subset_tree_acyclic() -> TestResult {
         let mut graph = DirectedGraph::<()>::new();
-        let _ = graph.add_node("0", ());
-        let _ = graph.add_node("1", ());
-        let _ = graph.add_node("2", ());
-        let _ = graph.add_node("3", ());
-        let _ = graph.add_node("4", ());
-        let _ = graph.add_node("5", ());
-        let _ = graph.add_edge("0", "1");
-        let _ = graph.add_edge("1", "2");
-        let _ = graph.add_edge("2", "3");
-        let _ = graph.add_edge("3", "4");
-        let _ = graph.add_edge("0", "4");
-        let _ = graph.add_edge("3", "5");
+        let id_0 = graph.add_node("0", ())?;
+        let id_1 = graph.add_node("1", ())?;
+        let id_2 = graph.add_node("2", ())?;
+        let id_3 = graph.add_node("3", ())?;
+        let id_4 = graph.add_node("4", ())?;
+        let id_5 = graph.add_node("5", ())?;
+        let _ = graph.add_edge(id_0, id_1);
+        let _ = graph.add_edge(id_1, id_2);
+        let _ = graph.add_edge(id_2, id_3);
+        let _ = graph.add_edge(id_3, id_4);
+        let _ = graph.add_edge(id_0, id_4);
+        let _ = graph.add_edge(id_3, id_5);
 
-        let graph = DirectedAcyclicGraph::build(graph).unwrap();
+        let graph = DirectedAcyclicGraph::build(graph)?;
 
-        let subset_graph = graph.subset("1").unwrap();
+        let subset_graph = graph.subset(id_1)?;
 
-        assert_eq!(subset_graph.get_leaves(), vec!["4", "5"]);
+        assert_eq!(subset_graph.get_leaves(), vec![id_4, id_5]);
+        Ok(())
     }
 }
