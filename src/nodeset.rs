@@ -128,6 +128,39 @@ impl<Data> NodeSet<Data> {
         Ok(NodeSet { ids, hrids, data })
     }
 
+    pub fn translate_ids(
+        &self,
+        node_ids: impl IntoIterator<Item = NodeId>,
+    ) -> GraphInteractionResult<Vec<String>> {
+        let node_ids: HashSet<_> = node_ids.into_iter().collect();
+        let mut hrids = Vec::new();
+        for (index, node_id) in self.ids.iter().enumerate() {
+            if node_ids.contains(node_id) {
+                hrids.push(unsafe { self.hrids.get_unchecked(index) }.clone());
+            }
+        }
+        if hrids.len() != node_ids.len() {
+            return Err(GraphInteractionError::NodeNotExist);
+        }
+        Ok(hrids)
+    }
+
+    pub fn get_data_mul(
+        &self,
+        node_ids: impl IntoIterator<Item = NodeId>,
+    ) -> GraphInteractionResult<Vec<String>> {
+        let node_ids: HashSet<_> = node_ids.into_iter().collect();
+        let mut hrids = Vec::new();
+        for (index, node_id) in self.ids.iter().enumerate() {
+            if node_ids.contains(node_id) {
+                hrids.push(unsafe { self.hrids.get_unchecked(index) }.clone());
+            }
+        }
+        if hrids.len() != node_ids.len() {
+            return Err(GraphInteractionError::NodeNotExist);
+        }
+        Ok(hrids)
+    }
     pub fn get_key_value(&self, node_id: NodeId) -> Option<(&str, &Data)> {
         self.get_index(node_id).map(|i| {
             let node_hrid = unsafe { self.hrids.get_unchecked(i) };
