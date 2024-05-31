@@ -161,15 +161,19 @@ impl<Data> DirectedGraph<Data> {
         self.nodes.len()
     }
 
-    pub fn add_node(
+    pub fn add_node<'a>(
         &mut self,
-        id: impl AsRef<str>,
+        id: &'a str,
         data: Data,
-    ) -> Result<&mut Self, DuplicateNode> {
-        let node_id: NodeId = id.as_ref().into();
+    ) -> Result<&mut Self, DuplicateNode<'a>> {
+        if self.nodes.contains_key(id) {
+            return Err(DuplicateNode(id));
+        }
+
+        let node_id: NodeId = id.into();
 
         match self.nodes.insert(node_id.clone(), data) {
-            Some(_) => Err(DuplicateNode(node_id)),
+            Some(_) => Err(DuplicateNode(id)),
             _ => {
                 self.children.insert(node_id.clone(), HashSet::new());
                 self.parents.insert(node_id.clone(), HashSet::new());
@@ -543,7 +547,7 @@ impl<Data> DirectedGraph<Data> {
         visited.insert(node.id());
 
         new_dg
-            .add_node(node.id(), node.data())
+            .add_node(node.id().as_ref(), node.data())
             .expect("Nodes cannot de duplicated");
 
         for child in self.children(node_id)?.iter() {

@@ -15,19 +15,15 @@ impl std::fmt::Display for GraphHasCycle {
 impl std::error::Error for GraphHasCycle {}
 
 #[derive(Debug)]
-pub struct DuplicateNode(pub NodeId);
+pub struct DuplicateNode<'a>(pub &'a str);
 
-impl std::fmt::Display for DuplicateNode {
+impl<'a> std::fmt::Display for DuplicateNode<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "Unable to insert node, `{}` already exists",
-            self.0.as_ref()
-        )
+        write!(f, "Unable to insert node, `{}` already exists", self.0)
     }
 }
 
-impl std::error::Error for DuplicateNode {}
+impl<'a> std::error::Error for DuplicateNode<'a> {}
 
 #[derive(Debug)]
 pub enum GraphInteractionError {
