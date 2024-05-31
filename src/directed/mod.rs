@@ -1,8 +1,10 @@
 use serde::{Deserialize, Serialize};
 
 use crate::prelude::*;
-use std::collections::{HashMap, HashSet};
 use std::ops::Not;
+
+type HashMap<K, V> = rustc_hash::FxHashMap<K, V>;
+type HashSet<V> = rustc_hash::FxHashSet<V>;
 
 #[derive(Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(Serialize))]
@@ -55,8 +57,8 @@ where
                 })
         }
 
-        let mut parents = HashMap::new();
-        let mut children = HashMap::new();
+        let mut parents = HashMap::default();
+        let mut children = HashMap::default();
         let mut n_edges = None;
 
         while let Some(key) = map.next_key::<&str>()? {
@@ -150,9 +152,9 @@ where
 impl<Data> DirectedGraph<Data> {
     pub fn new() -> Self {
         DirectedGraph {
-            nodes: HashMap::new(),
-            parents: HashMap::new(),
-            children: HashMap::new(),
+            nodes: HashMap::default(),
+            parents: HashMap::default(),
+            children: HashMap::default(),
             n_edges: 0,
         }
     }
@@ -175,8 +177,8 @@ impl<Data> DirectedGraph<Data> {
         match self.nodes.insert(node_id.clone(), data) {
             Some(_) => Err(DuplicateNode(id)),
             _ => {
-                self.children.insert(node_id.clone(), HashSet::new());
-                self.parents.insert(node_id.clone(), HashSet::new());
+                self.children.insert(node_id.clone(), HashSet::default());
+                self.parents.insert(node_id.clone(), HashSet::default());
                 Ok(self)
             }
         }
@@ -375,7 +377,7 @@ impl<Data> DirectedGraph<Data> {
         }
 
         let mut queue = Vec::new();
-        let mut visited = HashSet::new();
+        let mut visited = HashSet::default();
         let mut parents = Vec::new(); // To track the path back to the start node
 
         // Initialize
@@ -459,7 +461,7 @@ impl<Data> DirectedGraph<Data> {
         nodes: &[impl AsRef<str>],
     ) -> GraphInteractionResult<Vec<NodeId>> {
         let mut leaves = Vec::new();
-        let mut visited = HashSet::new();
+        let mut visited = HashSet::default();
         let mut to_visit = nodes
             .iter()
             .map(|node| self.get_node_id(node.as_ref()))
@@ -499,7 +501,7 @@ impl<Data> DirectedGraph<Data> {
 
     pub fn get_roots_over(&self, nodes: &[impl AsRef<str>]) -> GraphInteractionResult<Vec<NodeId>> {
         let mut roots = Vec::new();
-        let mut visited = HashSet::new();
+        let mut visited = HashSet::default();
         let mut to_visit = nodes
             .iter()
             .map(|node| self.get_node_id(node.as_ref()))
@@ -565,7 +567,7 @@ impl<Data> DirectedGraph<Data> {
     /// node.
     pub fn subset(&self, node_id: impl AsRef<str>) -> GraphInteractionResult<DirectedGraph<&Data>> {
         let mut new_dg = DirectedGraph::new();
-        let mut visited = HashSet::new();
+        let mut visited = HashSet::default();
 
         self.subset_recursive(None, node_id.as_ref(), &mut new_dg, &mut visited)?;
 
