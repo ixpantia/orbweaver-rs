@@ -4,13 +4,114 @@ use crate::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::ops::Not;
 
-#[derive(Debug)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize))]
 pub struct DirectedGraph<Data> {
     pub(crate) nodes: HashMap<NodeId, Data>,
     pub(crate) parents: HashMap<NodeId, HashSet<NodeId>>,
     pub(crate) children: HashMap<NodeId, HashSet<NodeId>>,
     pub(crate) n_edges: usize,
+}
+struct DGVisitor<Data>(std::marker::PhantomData<Data>);
+
+impl<Data> DGVisitor<Data> {
+    fn new() -> Self {
+        DGVisitor(std::marker::PhantomData)
+    }
+}
+
+impl<'de, Data> serde::de::Visitor<'de> for DGVisitor<Data>
+where
+    Data: Deserialize<'de>,
+{
+    type Value = DirectedGraph<Data>;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        formatter.write_str("struct DirectedGraph")
+    }
+
+    fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+    where
+        A: serde::de::MapAccess<'de>,
+    {
+        // Deserialize Vec<Rc<str>>
+        let nodes: HashMap<NodeId, Data> = match map.next_entry()? {
+            Some(("nodes", nodes_map)) => nodes_map,
+            _ => {
+                return Err(serde::de::Error::custom(
+                    "The `nodes` field must always be the first",
+                ))
+            }
+        };
+
+        fn get_node_id<Err, Data>(map: &HashMap<NodeId, Data>, key: &str) -> Result<NodeId, Err>
+        where
+            Err: serde::de::Error,
+        {
+            map.get_key_value(key)
+                .map(|(node_id, _)| node_id.clone())
+                .ok_or_else(|| {
+                    serde::de::Error::custom(format!("NodeId {} not found in nodes map", key))
+                })
+        }
+
+        let mut parents = HashMap::new();
+        let mut children = HashMap::new();
+        let mut n_edges = None;
+
+        while let Some(key) = map.next_key::<&str>()? {
+            match key {
+                "parents" => {
+                    let parents_vec: HashMap<&str, Vec<&str>> = map.next_value()?;
+                    for (k, v) in parents_vec {
+                        let k = get_node_id(&nodes, k)?;
+                        let v = v
+                            .into_iter()
+                            .map(|v| get_node_id(&nodes, v))
+                            .collect::<Result<HashSet<NodeId>, _>>()?;
+                        parents.insert(k, v);
+                    }
+                }
+                "children" => {
+                    let children_vec: HashMap<&str, Vec<&str>> = map.next_value()?;
+                    for (k, v) in children_vec {
+                        let k = get_node_id(&nodes, k)?;
+                        let v = v
+                            .into_iter()
+                            .map(|v| get_node_id(&nodes, v))
+                            .collect::<Result<HashSet<NodeId>, _>>()?;
+                        children.insert(k, v);
+                    }
+                }
+                "n_edges" => {
+                    n_edges = Some(map.next_value()?);
+                }
+                _ => return Err(serde::de::Error::custom("Unknown field")),
+            }
+        }
+
+        let n_edges =
+            n_edges.ok_or_else(|| serde::de::Error::custom("field `n_edges` no included"))?;
+
+        Ok(DirectedGraph {
+            nodes,
+            parents,
+            children,
+            n_edges,
+        })
+    }
+}
+
+impl<'de, Data> Deserialize<'de> for DirectedGraph<Data>
+where
+    Data: Deserialize<'de>,
+{
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        deserializer.deserialize_map(DGVisitor::<Data>::new())
+    }
 }
 
 impl<Data: Clone> Clone for DirectedGraph<Data> {
@@ -703,5 +804,30 @@ mod tests {
         let subset_graph = graph.subset("1").unwrap();
 
         assert_eq!(subset_graph.get_leaves(), vec!["4", "5"]);
+    }
+
+    #[test]
+    fn test_serde_json() {
+        let mut graph = DirectedGraph::<()>::new();
+        let _ = graph.add_node("0", ());
+        let _ = graph.add_node("1", ());
+        let _ = graph.add_node("2", ());
+        let _ = graph.add_node("3", ());
+        let _ = graph.add_node("4", ());
+        let _ = graph.add_node("5", ());
+        let _ = graph.add_edge("0", "1");
+        let _ = graph.add_edge("1", "2");
+        let _ = graph.add_edge("2", "3");
+        let _ = graph.add_edge("3", "4");
+        let _ = graph.add_edge("0", "4");
+        let _ = graph.add_edge("3", "5");
+
+        let json = serde_json::to_string_pretty(&graph).unwrap();
+
+        println!("{}", json);
+
+        let graph2 = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(graph, graph2);
     }
 }
