@@ -10,8 +10,8 @@ type HashSet<V> = rustc_hash::FxHashSet<V>;
 #[cfg_attr(feature = "serde", derive(Serialize))]
 pub struct DirectedGraph<Data> {
     pub(crate) nodes: HashMap<NodeId, Data>,
-    pub(crate) parents: HashMap<NodeId, HashSet<NodeId>>,
-    pub(crate) children: HashMap<NodeId, HashSet<NodeId>>,
+    pub(crate) parents: HashMap<NodeId, Vec<NodeId>>,
+    pub(crate) children: HashMap<NodeId, Vec<NodeId>>,
     pub(crate) n_edges: usize,
 }
 struct DGVisitor<Data>(std::marker::PhantomData<Data>);
@@ -70,7 +70,7 @@ where
                         let v = v
                             .into_iter()
                             .map(|v| get_node_id(&nodes, v))
-                            .collect::<Result<HashSet<NodeId>, _>>()?;
+                            .collect::<Result<Vec<NodeId>, _>>()?;
                         parents.insert(k, v);
                     }
                 }
@@ -81,7 +81,7 @@ where
                         let v = v
                             .into_iter()
                             .map(|v| get_node_id(&nodes, v))
-                            .collect::<Result<HashSet<NodeId>, _>>()?;
+                            .collect::<Result<Vec<NodeId>, _>>()?;
                         children.insert(k, v);
                     }
                 }
@@ -177,8 +177,8 @@ impl<Data> DirectedGraph<Data> {
         match self.nodes.insert(node_id.clone(), data) {
             Some(_) => Err(DuplicateNode(id)),
             _ => {
-                self.children.insert(node_id.clone(), HashSet::default());
-                self.parents.insert(node_id.clone(), HashSet::default());
+                self.children.insert(node_id.clone(), Vec::default());
+                self.parents.insert(node_id.clone(), Vec::default());
                 Ok(self)
             }
         }
@@ -227,11 +227,11 @@ impl<Data> DirectedGraph<Data> {
         self.children
             .entry(from.clone())
             .or_default()
-            .insert(to.clone());
+            .push(to.clone());
         self.parents
             .entry(to.clone())
             .or_default()
-            .insert(from.clone());
+            .push(from.clone());
         self.n_edges += 1;
         Ok(self)
     }
@@ -249,19 +249,19 @@ impl<Data> DirectedGraph<Data> {
 
     pub fn edge_exists(&self, from: impl AsRef<str>, to: impl AsRef<str>) -> bool {
         if let Some(children) = self.children.get(from.as_ref()) {
-            return children.contains(to.as_ref());
+            return children.iter().find(|&n| n == to.as_ref()).is_some();
         }
         false
     }
 
-    pub fn children(&self, node: impl AsRef<str>) -> GraphInteractionResult<&HashSet<NodeId>> {
+    pub fn children(&self, node: impl AsRef<str>) -> GraphInteractionResult<&[NodeId]> {
         match self.children.get(node.as_ref()) {
             None => Err(GraphInteractionError::node_not_exists(node)),
             Some(children) => Ok(children),
         }
     }
 
-    pub fn parents(&self, node: impl AsRef<str>) -> GraphInteractionResult<&HashSet<NodeId>> {
+    pub fn parents(&self, node: impl AsRef<str>) -> GraphInteractionResult<&[NodeId]> {
         match self.parents.get(node.as_ref()) {
             None => Err(GraphInteractionError::node_not_exists(node)),
             Some(parents) => Ok(parents),
@@ -273,7 +273,11 @@ impl<Data> DirectedGraph<Data> {
         let parents = self.parents.get_mut(to.as_ref());
 
         if let (Some(children), Some(parents)) = (children, parents) {
-            if children.remove(to.as_ref()) && parents.remove(from.as_ref()) {
+            let child_index = children.iter().position(|n| n == to.as_ref());
+            let parent_index = parents.iter().position(|n| n == from.as_ref());
+            if let (Some(ci), Some(pi)) = (child_index, parent_index) {
+                children.swap_remove(ci);
+                parents.swap_remove(pi);
                 self.n_edges -= 1;
             }
         }
@@ -287,7 +291,10 @@ impl<Data> DirectedGraph<Data> {
             // We remove this node from the children list
             for parent in parents {
                 if let Some(children) = self.children.get_mut(parent) {
-                    children.remove(node_id.as_ref());
+                    children
+                        .iter()
+                        .position(|c| c == node_id.as_ref())
+                        .map(|i| children.swap_remove(i));
                 }
             }
             self.parents.remove(node_id.as_ref());
@@ -298,7 +305,10 @@ impl<Data> DirectedGraph<Data> {
             // We remove this node from other node's parent list
             for child in children {
                 if let Some(parents) = self.parents.get_mut(child) {
-                    parents.remove(node_id.as_ref());
+                    parents
+                        .iter()
+                        .position(|c| c == node_id.as_ref())
+                        .map(|i| parents.swap_remove(i));
                 }
             }
             self.children.remove(node_id.as_ref());

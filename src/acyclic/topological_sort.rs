@@ -8,7 +8,7 @@ pub fn topological_sort<Data>(dg: &DirectedGraph<Data>) -> Result<Vec<NodeId>, G
     while let Some(node) = no_deps.pop() {
         res.push(node.clone());
 
-        if let Ok(parents) = dg.parents(&node).cloned() {
+        if let Ok(parents) = dg.parents(&node).map(Vec::from) {
             for parent in parents {
                 dg.remove_edge(&parent, &node);
                 if !dg.has_children(&parent).unwrap() {
