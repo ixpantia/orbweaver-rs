@@ -1,258 +1,291 @@
+pub mod acyclic;
+mod get_rel2_on_rel1;
+
+use fxhash::FxBuildHasher;
+use lasso::Spur;
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use self::acyclic::DirectedAcyclicGraph;
+use self::get_rel2_on_rel1::get_values_on_rel_map;
 use crate::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::ops::Not;
+use std::sync::Arc;
 
-#[derive(Debug)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub struct DirectedGraph<Data> {
-    pub(crate) nodes: HashMap<NodeId, Data>,
-    pub(crate) parents: HashMap<NodeId, HashSet<NodeId>>,
-    pub(crate) children: HashMap<NodeId, HashSet<NodeId>>,
+#[derive(Clone)]
+pub struct DirectedGraphBuilder {
+    pub(crate) parents: Vec<u32>,
+    pub(crate) children: Vec<u32>,
+    pub(crate) nodes: lasso::Rodeo<Spur, FxBuildHasher>,
     pub(crate) n_edges: usize,
 }
 
-impl<Data: Clone> Clone for DirectedGraph<Data> {
-    fn clone(&self) -> Self {
-        DirectedGraph {
-            nodes: HashMap::clone(&self.nodes),
-            parents: HashMap::clone(&self.parents),
-            children: HashMap::clone(&self.children),
-            n_edges: self.n_edges,
-        }
-    }
+fn find_leaves(parents: &[u32], children: &[u32]) -> Vec<u32> {
+    let mut leaves: Vec<_> = children
+        .par_iter()
+        .filter(|child| parents.binary_search(child).is_err())
+        .copied()
+        .collect();
+    leaves.sort_unstable();
+    leaves.dedup();
+    leaves
 }
 
-impl<Data> DirectedGraph<&Data>
-where
-    Data: Clone,
-{
-    pub fn cloned(self) -> DirectedGraph<Data> {
-        let nodes: HashMap<NodeId, Data> = self
-            .nodes
-            .iter()
-            .map(|(key, &value)| (key.clone(), value.clone()))
-            .collect();
-        let parents = self.parents;
-        let children = self.children;
-        let n_edges = self.n_edges;
-        DirectedGraph {
-            nodes,
-            parents,
-            children,
-            n_edges,
-        }
-    }
+fn find_roots(parents: &[u32], children: &[u32]) -> Vec<u32> {
+    let mut roots: Vec<_> = parents
+        .par_iter()
+        .filter(|parent| children.binary_search(parent).is_err())
+        .copied()
+        .collect();
+    roots.sort_unstable();
+    roots.dedup();
+    roots
 }
 
-impl<Data> DirectedGraph<Data> {
+impl DirectedGraphBuilder {
     pub fn new() -> Self {
-        DirectedGraph {
-            nodes: HashMap::new(),
-            parents: HashMap::new(),
-            children: HashMap::new(),
+        DirectedGraphBuilder {
+            nodes: lasso::Rodeo::with_hasher(FxBuildHasher::default()),
+            children: Vec::new(),
+            parents: Vec::new(),
             n_edges: 0,
         }
     }
 
-    pub fn n_nodes(&self) -> usize {
-        self.nodes.len()
+    #[inline(always)]
+    pub(crate) fn get_or_intern(&mut self, val: impl AsRef<str>) -> u32 {
+        self.nodes.get_or_intern(val).into_inner().get()
     }
-
-    pub fn add_node(
-        &mut self,
-        id: impl AsRef<str>,
-        data: Data,
-    ) -> Result<&mut Self, DuplicateNode> {
-        let node_id: NodeId = id.as_ref().into();
-
-        match self.nodes.insert(node_id.clone(), data) {
-            Some(_) => Err(DuplicateNode(node_id)),
-            _ => {
-                self.children.insert(node_id.clone(), HashSet::new());
-                self.parents.insert(node_id.clone(), HashSet::new());
-                Ok(self)
-            }
-        }
-    }
-
-    pub fn update_node_data(
-        &mut self,
-        id: impl AsRef<str>,
-        mut data: Data,
-    ) -> GraphInteractionResult<Data> {
-        match self.nodes.get_mut(id.as_ref()) {
-            Some(node_data) => {
-                std::mem::swap(&mut data, node_data);
-                Ok(data)
-            }
-            None => Err(GraphInteractionError::node_not_exists(id)),
-        }
-    }
-
-    pub fn get_node(&self, id: impl AsRef<str>) -> GraphInteractionResult<Node<&Data>> {
-        if let Some((node_id, data)) = self.nodes.get_key_value(id.as_ref()) {
-            return Ok(Node::new(node_id.clone(), data));
-        }
-        Err(GraphInteractionError::node_not_exists(id))
-    }
-
-    pub fn get_nodes(
-        &self,
-        ids: impl Iterator<Item = impl AsRef<str>>,
-    ) -> GraphInteractionResult<Vec<Node<&Data>>> {
-        ids.map(|node_id| self.get_node(node_id)).collect()
-    }
-    pub fn get_node_id(&self, id: impl AsRef<str>) -> GraphInteractionResult<NodeId> {
-        if let Some((node_id, _)) = self.nodes.get_key_value(id.as_ref()) {
-            return Ok(node_id.clone());
-        }
-        Err(GraphInteractionError::node_not_exists(id))
-    }
-    pub fn add_edge(
-        &mut self,
-        from: impl AsRef<str>,
-        to: impl AsRef<str>,
-    ) -> GraphInteractionResult<&mut Self> {
-        let from = self.get_node_id(&from)?;
-        let to = self.get_node_id(&to)?;
-        self.children
-            .entry(from.clone())
-            .or_default()
-            .insert(to.clone());
-        self.parents
-            .entry(to.clone())
-            .or_default()
-            .insert(from.clone());
+    pub fn add_edge(&mut self, from: impl AsRef<str>, to: impl AsRef<str>) -> &mut Self {
+        let from = self.get_or_intern(&from);
+        let to = self.get_or_intern(&to);
+        self.parents.push(from);
+        self.children.push(to);
         self.n_edges += 1;
-        Ok(self)
+        self
     }
-
-    pub fn add_path(&mut self, path: &[impl AsRef<str>]) -> GraphInteractionResult<&mut Self> {
-        if path.len() > 0 {
-            for edge in path.windows(2) {
-                let from = unsafe { edge.get_unchecked(0) };
-                let to = unsafe { edge.get_unchecked(1) };
-                self.add_edge(from, to)?;
-            }
+    pub fn add_path(&mut self, path: impl IntoIterator<Item = impl AsRef<str>>) -> &mut Self {
+        let mut path = path.into_iter().peekable();
+        while let (Some(from), Some(to)) = (path.next(), path.peek()) {
+            self.add_edge(from.as_ref(), to.as_ref());
         }
-        Ok(self)
-    }
-
-    pub fn edge_exists(&self, from: impl AsRef<str>, to: impl AsRef<str>) -> bool {
-        if let Some(children) = self.children.get(from.as_ref()) {
-            return children.contains(to.as_ref());
-        }
-        false
-    }
-
-    pub fn children(&self, node: impl AsRef<str>) -> GraphInteractionResult<&HashSet<NodeId>> {
-        match self.children.get(node.as_ref()) {
-            None => Err(GraphInteractionError::node_not_exists(node)),
-            Some(children) => Ok(children),
-        }
-    }
-
-    pub fn parents(&self, node: impl AsRef<str>) -> GraphInteractionResult<&HashSet<NodeId>> {
-        match self.parents.get(node.as_ref()) {
-            None => Err(GraphInteractionError::node_not_exists(node)),
-            Some(parents) => Ok(parents),
-        }
-    }
-
-    pub fn remove_edge(&mut self, from: impl AsRef<str>, to: impl AsRef<str>) -> &mut Self {
-        let children = self.children.get_mut(from.as_ref());
-        let parents = self.parents.get_mut(to.as_ref());
-
-        if let (Some(children), Some(parents)) = (children, parents) {
-            if children.remove(to.as_ref()) && parents.remove(from.as_ref()) {
-                self.n_edges -= 1;
-            }
-        }
-
         self
     }
 
-    pub fn remove_node(&mut self, node_id: impl AsRef<str>) -> &mut Self {
-        // Remove all edges that point to this
-        if let Some(parents) = self.parents.get(node_id.as_ref()) {
-            // We remove this node from the children list
-            for parent in parents {
-                if let Some(children) = self.children.get_mut(parent) {
-                    children.remove(node_id.as_ref());
-                }
-            }
-            self.parents.remove(node_id.as_ref());
+    pub fn build_directed(self) -> DirectedGraph {
+        // When we build we will do some optimizations
+        let mut unique_parents = self.parents.clone();
+        unique_parents.sort_unstable();
+        unique_parents.dedup();
+        unique_parents.shrink_to_fit();
+
+        let mut unique_children = self.children.clone();
+        unique_children.sort_unstable();
+        unique_children.dedup();
+        unique_parents.shrink_to_fit();
+
+        let leaves = find_leaves(&unique_parents, &unique_children);
+        let roots = find_roots(&unique_parents, &unique_children);
+
+        // Maps parents to their children
+        let mut children_map = HashMap::<u32, Vec<u32>, _>::with_hasher(FxBuildHasher::default());
+
+        for i in 0..self.parents.len() {
+            children_map
+                .entry(self.parents[i])
+                .or_default()
+                .push(self.children[i]);
         }
 
-        // Remove all edges from this node to other nodes
-        if let Some(children) = self.children.get(node_id.as_ref()) {
-            // We remove this node from other node's parent list
-            for child in children {
-                if let Some(parents) = self.parents.get_mut(child) {
-                    parents.remove(node_id.as_ref());
-                }
-            }
-            self.children.remove(node_id.as_ref());
+        // Maps children to their parents
+        let mut parent_map = HashMap::<u32, Vec<u32>, _>::with_hasher(FxBuildHasher::default());
+
+        for i in 0..self.parents.len() {
+            parent_map
+                .entry(self.children[i])
+                .or_default()
+                .push(self.parents[i]);
         }
 
-        self.nodes.remove(node_id.as_ref());
-
-        self
-    }
-
-    pub fn has_parents(&self, id: impl AsRef<str>) -> GraphInteractionResult<bool> {
-        Ok(!self.parents(id)?.is_empty())
-    }
-
-    pub fn has_children(&self, id: impl AsRef<str>) -> GraphInteractionResult<bool> {
-        Ok(!self.children(id)?.is_empty())
-    }
-
-    pub fn nodes(&self) -> impl Iterator<Item = Node<&Data>> {
-        self.nodes
-            .iter()
-            .map(|(node_id, data)| Node::new(node_id.clone(), data))
-    }
-
-    pub fn node_ids(&self) -> impl Iterator<Item = NodeId> + '_ {
-        self.nodes.keys().cloned()
-    }
-
-    pub fn into_dataless(&self) -> DirectedGraph<()> {
-        let nodes = self
-            .nodes
-            .keys()
-            .map(|node_id| (node_id.clone(), ()))
-            .collect();
         DirectedGraph {
-            nodes,
-            parents: self.parents.clone(),
-            children: self.children.clone(),
+            nodes: Arc::new(self.nodes.into_reader()),
+            leaves,
+            roots,
+            children_map,
+            parent_map,
             n_edges: self.n_edges,
         }
     }
-    /// Finds path using breadth-first search
+
+    pub fn build_acyclic(self) -> Result<DirectedAcyclicGraph, GraphHasCycle> {
+        DirectedAcyclicGraph::build(self.build_directed())
+    }
+}
+
+impl Default for DirectedGraphBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct DirectedGraph {
+    pub(crate) nodes: Arc<lasso::RodeoReader<Spur, FxBuildHasher>>,
+    pub(crate) leaves: Vec<u32>,
+    pub(crate) roots: Vec<u32>,
+    /// Maps parents to their children
+    /// Key: Parent  | Value: Children
+    pub(crate) children_map: HashMap<u32, Vec<u32>, FxBuildHasher>,
+    /// Maps children to their parents
+    /// Key: Child | Value: Parents
+    pub(crate) parent_map: HashMap<u32, Vec<u32>, FxBuildHasher>,
+    pub(crate) n_edges: usize,
+}
+
+impl std::fmt::Debug for DirectedGraph {
+    #[inline]
+    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
+        writeln!(f, "|   Parent   |    Child   |")?;
+        writeln!(f, "| ---------- | ---------- |")?;
+        for (parent, children) in self.children_map.iter() {
+            for child in children {
+                writeln!(f, "| {:0>10} | {:0>10} |", parent, child)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+impl DirectedGraph {
+    #[inline(always)]
+    pub(crate) fn resolve(&self, val: u32) -> GraphInteractionResult<&str> {
+        Ok(self.nodes.resolve(unsafe { std::mem::transmute(&val) }))
+    }
+
+    #[inline(always)]
+    pub(crate) fn resolve_mul(
+        &self,
+        nodes: impl IntoIterator<Item = u32>,
+    ) -> GraphInteractionResult<Vec<&str>> {
+        nodes.into_iter().map(|node| self.resolve(node)).collect()
+    }
+
+    #[inline(always)]
+    pub(crate) fn get_internal(&self, val: impl AsRef<str>) -> GraphInteractionResult<u32> {
+        self.nodes
+            .get(val.as_ref())
+            .map(|v| v.into_inner().get())
+            .ok_or_else(|| GraphInteractionError::node_not_exists(val))
+    }
+
+    #[inline(always)]
+    pub(crate) fn get_internal_mul(
+        &self,
+        nodes: impl IntoIterator<Item = impl AsRef<str>>,
+    ) -> GraphInteractionResult<Vec<u32>> {
+        nodes
+            .into_iter()
+            .map(|node| self.get_internal(node))
+            .collect()
+    }
+
+    pub(crate) fn edge_exists(&self, from: u32, to: u32) -> bool {
+        self.children_map
+            .get(&from)
+            .map(|children| children.contains(&to))
+            .unwrap_or(false)
+    }
+
+    pub(crate) fn children_u32(&self, ids: &[u32], out: &mut Vec<u32>) {
+        // Gets the children for the given parent
+        get_values_on_rel_map(ids, &self.children_map, out)
+    }
+
+    /// This function returns the children of a given set of
+    /// nodes.
+    ///
+    /// NOTE: The returned `Vec` may include deuplicates.
+    /// For performance reasons, the responsability of
+    /// dedupping is on the user since it adds
+    /// significant overhead to the operation.
+    pub fn children(
+        &self,
+        nodes: impl IntoIterator<Item = impl AsRef<str>>,
+    ) -> GraphInteractionResult<Vec<&str>> {
+        let mut res = Vec::new();
+        let nodes = self.get_internal_mul(nodes)?;
+        self.children_u32(&nodes, &mut res);
+        self.resolve_mul(res)
+    }
+
+    pub(crate) fn parents_u32(&self, ids: &[u32], out: &mut Vec<u32>) {
+        // Gets the parents for the given children
+        get_values_on_rel_map(ids, &self.parent_map, out)
+    }
+
+    /// This function returns the parents of a given set of
+    /// nodes.
+    ///
+    /// NOTE: The returned `Vec` may include deuplicates.
+    /// For performance reasons, the responsability of
+    /// dedupping is on the user since it adds
+    /// significant overhead to the operation.
+    pub fn parents(
+        &self,
+        nodes: impl IntoIterator<Item = impl AsRef<str>>,
+    ) -> GraphInteractionResult<Vec<&str>> {
+        let mut res = Vec::new();
+        let nodes = self.get_internal_mul(nodes)?;
+        self.parents_u32(&nodes, &mut res);
+        self.resolve_mul(res)
+    }
+
+    pub fn has_parents(
+        &self,
+        nodes: impl IntoIterator<Item = impl AsRef<str>>,
+    ) -> GraphInteractionResult<Vec<bool>> {
+        nodes
+            .into_iter()
+            .map(|x| {
+                self.get_internal(x).map(|id| {
+                    // If we can find it on the children map
+                    // that means that it has parents
+                    self.parent_map.contains_key(&id)
+                })
+            })
+            .collect()
+    }
+
+    pub fn has_children(
+        &self,
+        nodes: impl IntoIterator<Item = impl AsRef<str>>,
+    ) -> GraphInteractionResult<Vec<bool>> {
+        nodes
+            .into_iter()
+            .map(|x| {
+                self.get_internal(x)
+                    .map(|id| self.children_map.contains_key(&id))
+            })
+            .collect()
+    }
+
     pub fn find_path(
         &self,
         from: impl AsRef<str>,
         to: impl AsRef<str>,
-    ) -> GraphInteractionResult<Option<Vec<NodeId>>> {
+    ) -> GraphInteractionResult<Vec<&str>> {
         // Helper function for constructing the path
-        fn construct_path(
-            parents: &[(&NodeId, &NodeId)],
-            start_id: &NodeId,
-            goal_id: &NodeId,
-        ) -> Vec<NodeId> {
+        fn construct_path(parents: &[(u32, u32)], start_id: u32, goal_id: u32) -> Vec<u32> {
             let mut path = Vec::new();
             let mut current_id = goal_id;
-            path.push(current_id.clone());
+            path.push(current_id);
 
             while current_id != start_id {
                 if let Some(parent_pair) = parents.iter().find(|(node, _)| *node == current_id) {
-                    current_id = &parent_pair.1;
-                    path.push(current_id.clone());
+                    current_id = parent_pair.1;
+                    path.push(current_id);
                 } else {
                     break; // This should not happen if the path exists
                 }
@@ -262,215 +295,194 @@ impl<Data> DirectedGraph<Data> {
             path
         }
 
-        let start_id = self.get_node(&from)?.node_id;
-        let goal_id = self.get_node(&to)?.node_id;
+        let from = self.get_internal(from)?;
+        let to = self.get_internal(to)?;
 
-        if start_id == goal_id {
-            return Ok(Some(vec![start_id]));
+        if from == to {
+            return Ok(vec![self.resolve(from)?]);
         }
 
         let mut queue = Vec::new();
-        let mut visited = HashSet::new();
+        let mut visited = Vec::new();
         let mut parents = Vec::new(); // To track the path back to the start node
 
         // Initialize
-        queue.push(&start_id);
-        visited.insert(&start_id);
+        queue.push(from);
+        visited.push(from);
 
         while let Some(current) = queue.pop() {
-            for child in self.children(current)? {
-                if !visited.contains(&child) {
-                    visited.insert(child);
-                    parents.push((child, current));
+            if let Some(children) = self.children_map.get(&current) {
+                for &child in children {
+                    if !visited.contains(&child) {
+                        visited.push(child);
+                        parents.push((child, current));
 
-                    if child == &goal_id {
-                        // If goal found, construct the path from parents
-                        return Ok(Some(construct_path(&parents, &start_id, &goal_id)));
+                        if child == to {
+                            // If goal found, construct the path from parents
+                            return self.resolve_mul(construct_path(&parents, from, to));
+                        }
+                        queue.push(child);
                     }
-                    queue.push(child);
                 }
             }
         }
 
-        Ok(None)
-    }
-
-    pub fn clear_edges(&mut self) -> &mut Self {
-        self.parents.clear();
-        self.children.clear();
-        self.n_edges = 0;
-        self
+        Ok(Vec::new())
     }
 
     pub fn least_common_parents(
         &self,
-        selected: &[impl AsRef<str>],
-    ) -> GraphInteractionResult<Vec<NodeId>> {
-        let selected: HashSet<NodeId> = selected
+        selected: impl IntoIterator<Item = impl AsRef<str>>,
+    ) -> GraphInteractionResult<Vec<&str>> {
+        let selected: Vec<u32> = self.get_internal_mul(selected)?;
+        let mut parents = Vec::new();
+        let mut least_common_parents = selected
             .iter()
-            .map(|node| self.get_node_id(node.as_ref()))
-            .collect::<GraphInteractionResult<_>>()?;
-        let mut least_common_parent = selected
-            .iter()
-            .filter(|&node_id| {
-                match self.parents.get(node_id.as_ref()) {
-                    // We return true because if the node has no parent then
-                    // it is part of the set of least common
-                    // parents
-                    None => true,
-                    Some(parents) => parents
-                        .iter()
-                        .any(|parent| selected.contains(parent.as_ref()))
-                        .not(),
-                }
+            .filter(|&&child| {
+                self.parents_u32(&[child], &mut parents);
+                parents.iter().any(|parent| selected.contains(parent)).not()
             })
-            .cloned()
+            .copied()
             .collect::<Vec<_>>();
 
-        least_common_parent.sort_unstable();
+        least_common_parents.sort_unstable();
+        least_common_parents.dedup();
 
-        Ok(least_common_parent)
+        self.resolve_mul(least_common_parents)
     }
 
-    /// With no dependencies
-    pub fn get_leaves(&self) -> Vec<NodeId> {
-        let mut leaves = self
-            .node_ids()
-            .filter(|node_id| {
-                !self
-                    .has_children(node_id)
-                    .expect("Using nodes from the graph directly")
-            })
-            .collect::<Vec<_>>();
-
-        leaves.sort_unstable();
-
-        leaves
+    pub fn get_all_leaves(&self) -> Vec<&str> {
+        self.resolve_mul(self.leaves.iter().copied())
+            .expect("All leaves are in the graph")
     }
 
-    /// Get leaves under a node or group of nodes
-    pub fn get_leaves_under(
-        &self,
-        nodes: &[impl AsRef<str>],
-    ) -> GraphInteractionResult<Vec<NodeId>> {
+    fn get_leaves_under_u32(&self, nodes: &[u32]) -> GraphInteractionResult<Vec<u32>> {
         let mut leaves = Vec::new();
         let mut visited = HashSet::new();
-        let mut to_visit = nodes
-            .iter()
-            .map(|node| self.get_node_id(node.as_ref()))
-            .collect::<GraphInteractionResult<Vec<_>>>()?;
+        let mut to_visit = nodes.to_vec();
 
         while let Some(node) = to_visit.pop() {
             if visited.contains(&node) {
                 continue;
             }
-            visited.insert(node.clone());
-            if self.has_children(&node)?.not() {
-                leaves.push(node);
-                continue;
+
+            visited.insert(node);
+
+            match self.children_map.get(&node) {
+                Some(children) => children.iter().for_each(|child| to_visit.push(*child)),
+                None if self.leaves.binary_search(&node).is_ok() => leaves.push(node),
+                _ => (),
             }
-            self.children(&node)?
-                .iter()
-                .for_each(|child| to_visit.push(child.clone()));
         }
 
         Ok(leaves)
     }
 
-    pub fn get_roots(&self) -> Vec<NodeId> {
-        let mut leaves = self
-            .node_ids()
-            .filter(|node_id| {
-                !self
-                    .has_parents(node_id)
-                    .expect("Using nodes from the graph directly")
-            })
-            .collect::<Vec<_>>();
-
-        leaves.sort_unstable();
-
-        leaves
+    /// This is a very expensive operation.
+    pub fn get_leaves_under(
+        &self,
+        nodes: impl IntoIterator<Item = impl AsRef<str>>,
+    ) -> GraphInteractionResult<Vec<&str>> {
+        let nodes = self.get_internal_mul(nodes)?;
+        self.resolve_mul(self.get_leaves_under_u32(&nodes)?)
     }
 
-    pub fn get_roots_over(&self, nodes: &[impl AsRef<str>]) -> GraphInteractionResult<Vec<NodeId>> {
+    pub fn get_all_roots(&self) -> Vec<&str> {
+        self.resolve_mul(self.roots.iter().copied())
+            .expect("All roots are in the graph")
+    }
+
+    fn get_roots_over_u32(&self, nodes: &[u32]) -> GraphInteractionResult<Vec<u32>> {
         let mut roots = Vec::new();
         let mut visited = HashSet::new();
-        let mut to_visit = nodes
-            .iter()
-            .map(|node| self.get_node_id(node.as_ref()))
-            .collect::<GraphInteractionResult<Vec<_>>>()?;
+        let mut to_visit = nodes.to_vec();
 
         while let Some(node) = to_visit.pop() {
             if visited.contains(&node) {
                 continue;
             }
-            visited.insert(node.clone());
-            if self.has_parents(&node)?.not() {
-                roots.push(node);
-                continue;
+
+            visited.insert(node);
+
+            match self.parent_map.get(&node) {
+                Some(parents) => parents.iter().for_each(|parent| to_visit.push(*parent)),
+                None if self.roots.binary_search(&node).is_ok() => roots.push(node),
+                _ => (),
             }
-            self.parents(&node)?
-                .iter()
-                .for_each(|parent| to_visit.push(parent.clone()));
         }
 
         Ok(roots)
     }
 
+    pub fn get_roots_over(
+        &self,
+        nodes: impl IntoIterator<Item = impl AsRef<str>>,
+    ) -> GraphInteractionResult<Vec<&str>> {
+        let nodes = self.get_internal_mul(nodes)?;
+        self.resolve_mul(self.get_roots_over_u32(&nodes)?)
+    }
     /// Private, do not use outside
     fn subset_recursive<'a, 'b>(
         &'a self,
-        parent: Option<&str>,
-        node_id: impl AsRef<str>,
-        new_dg: &'b mut DirectedGraph<&'a Data>,
-        visited: &'b mut HashSet<NodeId>,
-    ) -> GraphInteractionResult<()>
-    where
+        parent: Option<u32>,
+        node: u32,
+        new_dg: &'b mut DirectedGraph,
+        visited: &'b mut HashSet<u32>,
+    ) where
         'a: 'b,
     {
-        let node_id = node_id.as_ref();
-
-        let node = self.get_node(node_id)?;
-
-        if visited.contains(node_id) {
-            if let Some(parent) = parent {
-                new_dg.add_edge(parent, node_id)?;
-            }
-            return Ok(());
+        // If we have a parent we add the relationship
+        if let Some(parent) = parent {
+            new_dg.children_map.entry(parent).or_default().push(node);
+            new_dg.parent_map.entry(node).or_default().push(parent);
+            new_dg.n_edges += 1;
         }
 
-        visited.insert(node.id());
+        // If we have already visited this node
+        // we return :)
+        if visited.contains(&node) {
+            return;
+        }
+
+        // We insert this node into visited so
+        // we dont traverse it again
+        visited.insert(node);
+
+        // If this node has children then
+        // we recurse, else we insert it
+        // as a leaf
+        match self.children_map.get(&node) {
+            None => new_dg.leaves.push(node),
+            Some(children) => children
+                .iter()
+                .for_each(|&child| self.subset_recursive(Some(node), child, new_dg, visited)),
+        }
+    }
+
+    fn subset_u32(&self, node: u32) -> DirectedGraph {
+        let mut new_dg = DirectedGraph {
+            nodes: self.nodes.clone(),
+            // When subsetting the graph the only root will be
+            // the node we select. This is because we are selecting
+            // it and all their dependants.
+            roots: vec![node],
+            leaves: Vec::new(),
+            children_map: HashMap::default(),
+            parent_map: HashMap::default(),
+            n_edges: 0,
+        };
+
+        let mut visited = HashSet::new();
+
+        self.subset_recursive(None, node, &mut new_dg, &mut visited);
 
         new_dg
-            .add_node(node.id(), node.data())
-            .expect("Nodes cannot de duplicated");
-
-        for child in self.children(node_id)?.iter() {
-            self.subset_recursive(Some(node_id), child, new_dg, visited)?;
-        }
-
-        if let Some(parent) = parent {
-            new_dg.add_edge(parent, node_id)?;
-        }
-
-        Ok(())
     }
 
     /// Returns a new tree that is the subset of of all children under a
     /// node.
-    pub fn subset(&self, node_id: impl AsRef<str>) -> GraphInteractionResult<DirectedGraph<&Data>> {
-        let mut new_dg = DirectedGraph::new();
-        let mut visited = HashSet::new();
-
-        self.subset_recursive(None, node_id.as_ref(), &mut new_dg, &mut visited)?;
-
-        Ok(new_dg)
-    }
-}
-
-impl<Data> Default for DirectedGraph<Data> {
-    fn default() -> Self {
-        Self::new()
+    pub fn subset(&self, node: impl AsRef<str>) -> GraphInteractionResult<DirectedGraph> {
+        self.get_internal(node).map(|node| self.subset_u32(node))
     }
 }
 
@@ -478,230 +490,218 @@ impl<Data> Default for DirectedGraph<Data> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_create_a_new_directed_graph() {
-        let _ = DirectedGraph::<()>::new();
+    fn sort(mut vec: Vec<&str>) -> Vec<&str> {
+        vec.sort_unstable();
+        vec
     }
 
     #[test]
-    fn test_add_nodes_to_a_graph() -> Result<(), Box<dyn std::error::Error>> {
-        let mut graph = DirectedGraph::<()>::new();
-        graph
-            .add_node("0", ())?
-            .add_node("1", ())?
-            .add_node("2", ())?;
-        Ok(())
+    fn dg_builder_add_edge() {
+        let mut builder = DirectedGraphBuilder::new();
+        builder.add_edge("hello", "world");
+        assert_eq!(builder.parents, [1], "Parent is not equal");
+        assert_eq!(builder.children, [2], "Children is not equal");
     }
 
     #[test]
-    fn test_add_repeated_node_errors() {
-        let mut graph = DirectedGraph::<()>::new();
-        graph
-            .add_node("0", ())
-            .expect("First node can't be repeated");
-        assert!(graph.add_node("0", ()).is_err());
+    fn dg_builder_add_path() {
+        let mut builder = DirectedGraphBuilder::new();
+        builder.add_path(["hello", "world", "again"]);
+        assert_eq!(builder.parents, [1, 2], "Parent is not equal");
+        assert_eq!(builder.children, [2, 3], "Children is not equal");
     }
 
     #[test]
-    fn test_get_node_non_existent() {
-        let graph = DirectedGraph::<()>::new();
-        assert!(graph.get_node("0").is_err());
-    }
-
-    #[test]
-    fn test_get_node_existent() {
-        let mut graph = DirectedGraph::<()>::new();
-        let _ = graph.add_node("0", ());
-        let _ = graph.add_node("999", ());
-        assert!(graph.get_node("999").is_ok());
-    }
-
-    #[test]
-    fn test_add_edge() {
-        let mut graph = DirectedGraph::<()>::new();
-        let _ = graph.add_node("0", ());
-        let _ = graph.add_node("999", ());
-        assert!(graph.add_edge("0", "999").is_ok());
-        assert!(graph.has_children("0").unwrap());
-        assert!(graph.has_parents("999").unwrap());
-    }
-
-    #[test]
-    fn test_find_path_simple() {
-        let mut graph = DirectedGraph::<()>::new();
-        let _ = graph.add_node("0", ());
-        let _ = graph.add_node("1", ());
-        let _ = graph.add_node("2", ());
-        let _ = graph.add_node("3", ());
-        let _ = graph.add_node("4", ());
-        let _ = graph.add_edge("0", "1");
-        let _ = graph.add_edge("1", "2");
-        let _ = graph.add_edge("2", "3");
-        let _ = graph.add_edge("3", "4");
-
-        let path = graph.find_path("0", "4").unwrap();
-
-        assert_eq!(path.unwrap().len(), 5);
-    }
-
-    #[test]
-    fn test_find_path_no_path() {
-        let mut graph = DirectedGraph::<()>::new();
-        let _ = graph.add_node("0", ());
-        let _ = graph.add_node("1", ());
-        let _ = graph.add_node("2", ());
-        let _ = graph.add_node("3", ());
-        let _ = graph.add_node("4", ());
-        let _ = graph.add_edge("0", "1");
-        let _ = graph.add_edge("1", "2");
-        let _ = graph.add_edge("3", "4");
-
-        let path = graph.find_path("0", "4").unwrap();
-
-        assert_eq!(path, None);
-    }
-
-    #[test]
-    fn test_find_path_many_paths() {
-        let mut graph = DirectedGraph::<()>::new();
-        let _ = graph.add_node("0", ());
-        let _ = graph.add_node("1", ());
-        let _ = graph.add_node("2", ());
-        let _ = graph.add_node("3", ());
-        let _ = graph.add_node("4", ());
-        let _ = graph.add_edge("0", "1");
-        let _ = graph.add_edge("1", "2");
-        let _ = graph.add_edge("2", "3");
-        let _ = graph.add_edge("3", "4");
-        let _ = graph.add_edge("0", "4");
-
-        let path = graph.find_path("0", "4").unwrap();
-
-        assert_eq!(path.unwrap().len(), 2);
-    }
-
-    #[test]
-    fn test_least_common_parents() {
-        let mut graph = DirectedGraph::<()>::new();
-        let _ = graph.add_node("0", ());
-        let _ = graph.add_node("1", ());
-        let _ = graph.add_node("2", ());
-        let _ = graph.add_node("3", ());
-        let _ = graph.add_node("4", ());
-        let _ = graph.add_edge("0", "1");
-        let _ = graph.add_edge("1", "2");
-        let _ = graph.add_edge("2", "3");
-        let _ = graph.add_edge("3", "4");
-        let _ = graph.add_edge("0", "4");
-
-        assert_eq!(graph.least_common_parents(&["0", "1"]).unwrap(), vec!["0"]);
+    fn dg_get_children() {
+        let mut builder = DirectedGraphBuilder::new();
+        // We put more than 8 children to
+        // test if SIMD actually workd
+        builder.add_edge("hello", "0");
+        builder.add_edge("hello", "1");
+        builder.add_edge("hello", "2");
+        builder.add_edge("hello", "3");
+        builder.add_edge("hello", "4");
+        builder.add_edge("other", "5");
+        builder.add_edge("other", "6");
+        builder.add_edge("other", "7");
+        builder.add_edge("other", "8");
+        builder.add_edge("other", "9");
+        builder.add_edge("other", "10");
+        let dg = builder.build_directed();
         assert_eq!(
-            graph.least_common_parents(&["0", "1", "2"]).unwrap(),
-            vec!["0"]
+            sort(dg.children(["hello"]).unwrap()),
+            ["0", "1", "2", "3", "4"],
+            "Parent is not equal"
         );
         assert_eq!(
-            graph.least_common_parents(&["0", "1", "2", "4"]).unwrap(),
-            vec!["0"]
-        );
-
-        assert_eq!(
-            graph.least_common_parents(&["0", "1", "3"]).unwrap(),
-            vec!["0", "3"]
+            sort(dg.children(["hello", "other"]).unwrap()),
+            vec!["0", "1", "10", "2", "3", "4", "5", "6", "7", "8", "9"],
+            "Parent is not equal"
         );
     }
 
     #[test]
-    fn test_remove_edge() {
-        let mut graph = DirectedGraph::<()>::new();
-        let _ = graph.add_node("0", ());
-        let _ = graph.add_node("1", ());
-        let _ = graph.add_node("2", ());
-        let _ = graph.add_node("3", ());
-        let _ = graph.add_node("4", ());
-        let _ = graph.add_edge("0", "1");
-        let _ = graph.add_edge("1", "2");
-        let _ = graph.add_edge("2", "3");
-        let _ = graph.add_edge("3", "4");
-        let _ = graph.add_edge("0", "4");
-
+    fn dg_get_parents() {
+        let mut builder = DirectedGraphBuilder::new();
+        // We put more than 8 children to
+        // test if SIMD actually workd
+        builder.add_edge("hello", "0");
+        builder.add_edge("hello", "1");
+        builder.add_edge("hello", "2");
+        builder.add_edge("hello", "3");
+        builder.add_edge("hello", "A");
+        builder.add_edge("other", "A");
+        builder.add_edge("other", "6");
+        builder.add_edge("other", "7");
+        builder.add_edge("other", "8");
+        builder.add_edge("other", "9");
+        builder.add_edge("other", "10");
+        let dg = builder.build_directed();
+        assert_eq!(dg.parents(["A"]).unwrap(), vec!["hello", "other"],);
         assert_eq!(
-            graph.least_common_parents(&["0", "1", "2"]).unwrap(),
-            vec!["0"]
-        );
-
-        graph.remove_edge("1", "2");
-
-        assert_eq!(
-            graph.least_common_parents(&["0", "1", "2"]).unwrap(),
-            vec!["0", "2"]
+            dg.parents(["A", "0"]).unwrap(),
+            vec!["hello", "other", "hello"],
         );
     }
 
     #[test]
-    fn test_remove_node() {
-        let mut graph = DirectedGraph::<()>::new();
-        let _ = graph.add_node("0", ());
-        let _ = graph.add_node("1", ());
-        let _ = graph.add_node("2", ());
-        let _ = graph.add_node("3", ());
-        let _ = graph.add_node("4", ());
-        let _ = graph.add_edge("0", "1");
-        let _ = graph.add_edge("1", "2");
-        let _ = graph.add_edge("2", "3");
-        let _ = graph.add_edge("3", "4");
-        let _ = graph.add_edge("0", "4");
-
+    fn dg_has_parents() {
+        let mut builder = DirectedGraphBuilder::new();
+        // We put more than 8 children to
+        // test if SIMD actually workd
+        builder.add_edge("hello", "0");
+        builder.add_edge("hello", "1");
+        builder.add_edge("hello", "2");
+        builder.add_edge("hello", "3");
+        builder.add_edge("hello", "A");
+        builder.add_edge("other", "A");
+        builder.add_edge("other", "6");
+        builder.add_edge("other", "7");
+        builder.add_edge("other", "8");
+        builder.add_edge("other", "9");
+        builder.add_edge("other", "10");
+        let dg = builder.build_directed();
         assert_eq!(
-            graph.find_path("0", "3").unwrap().unwrap(),
-            vec!["0", "1", "2", "3"]
+            dg.has_parents(["A", "0", "hello", "10"]).unwrap(),
+            [true, true, false, true]
         );
-
-        graph.remove_node("2");
-
-        assert_eq!(graph.find_path("0", "3").unwrap(), None);
-
-        let _ = graph.add_node("2", ());
-
-        assert_eq!(graph.find_path("0", "3").unwrap(), None);
     }
 
     #[test]
-    fn test_get_leaves() {
-        let mut graph = DirectedGraph::<()>::new();
-        let _ = graph.add_node("0", ());
-        let _ = graph.add_node("1", ());
-        let _ = graph.add_node("2", ());
-        let _ = graph.add_node("3", ());
-        let _ = graph.add_node("4", ());
-        let _ = graph.add_node("5", ());
-        let _ = graph.add_edge("0", "1");
-        let _ = graph.add_edge("1", "2");
-        let _ = graph.add_edge("2", "3");
-        let _ = graph.add_edge("3", "4");
-        let _ = graph.add_edge("0", "4");
-        let _ = graph.add_edge("3", "5");
-
-        assert_eq!(graph.get_leaves(), vec!["4", "5"]);
+    fn dg_has_children() {
+        let mut builder = DirectedGraphBuilder::new();
+        // We put more than 8 children to
+        // test if SIMD actually workd
+        builder.add_edge("hello", "0");
+        builder.add_edge("hello", "1");
+        builder.add_edge("hello", "2");
+        builder.add_edge("hello", "3");
+        builder.add_edge("hello", "A");
+        builder.add_edge("other", "A");
+        builder.add_edge("other", "6");
+        builder.add_edge("other", "7");
+        builder.add_edge("other", "8");
+        builder.add_edge("other", "9");
+        builder.add_edge("other", "10");
+        let dg = builder.build_directed();
+        assert_eq!(
+            dg.has_children(["hello", "other", "9", "0"]).unwrap(),
+            [true, true, false, false]
+        );
     }
 
     #[test]
-    fn test_subset_tree_no_cycles() {
-        let mut graph = DirectedGraph::<()>::new();
-        let _ = graph.add_node("0", ());
-        let _ = graph.add_node("1", ());
-        let _ = graph.add_node("2", ());
-        let _ = graph.add_node("3", ());
-        let _ = graph.add_node("4", ());
-        let _ = graph.add_node("5", ());
-        let _ = graph.add_edge("0", "1");
-        let _ = graph.add_edge("1", "2");
-        let _ = graph.add_edge("2", "3");
-        let _ = graph.add_edge("3", "4");
-        let _ = graph.add_edge("0", "4");
-        let _ = graph.add_edge("3", "5");
+    fn dg_find_path() {
+        let mut builder = DirectedGraphBuilder::new();
+        // We put more than 8 children to
+        // test if SIMD actually workd
+        builder.add_path(["A", "B", "C", "D"]);
+        let dg = builder.clone().build_directed();
+        assert_eq!(dg.find_path("A", "D").unwrap(), ["A", "B", "C", "D"]);
 
-        let subset_graph = graph.subset("1").unwrap();
+        builder.add_path(["A", "H", "D"]);
+        let dg = builder.clone().build_directed();
+        assert_eq!(dg.find_path("A", "D").unwrap(), ["A", "H", "D"]);
+        assert_eq!(dg.children(["A"]).unwrap(), ["B", "H"]);
+    }
 
-        assert_eq!(subset_graph.get_leaves(), vec!["4", "5"]);
+    #[test]
+    fn dg_find_least_common_parents() {
+        let mut builder = DirectedGraphBuilder::new();
+        builder.add_edge("A", "B");
+        builder.add_edge("A", "C");
+        builder.add_edge("C", "D");
+        let dg = builder.clone().build_directed();
+        assert_eq!(dg.least_common_parents(["B", "D"]).unwrap(), ["B", "D"]);
+        assert_eq!(dg.least_common_parents(["B", "C"]).unwrap(), ["B", "C"]);
+        assert_eq!(
+            dg.least_common_parents(["B", "C", "D"]).unwrap(),
+            ["B", "C"]
+        );
+        assert_eq!(
+            dg.least_common_parents(["A", "B", "C", "D"]).unwrap(),
+            ["A"]
+        );
+    }
+
+    #[test]
+    fn dg_get_all_leaves() {
+        let mut builder = DirectedGraphBuilder::new();
+        builder.add_edge("A", "B");
+        builder.add_edge("A", "C");
+        builder.add_edge("C", "D");
+        builder.add_edge("C", "H");
+        builder.add_edge("0", "1");
+        let dg = builder.clone().build_directed();
+        assert_eq!(dg.get_all_leaves(), ["B", "D", "H", "1"]);
+    }
+
+    #[test]
+    fn dg_get_leaves_under() {
+        let mut builder = DirectedGraphBuilder::new();
+        builder.add_edge("A", "B");
+        builder.add_edge("A", "C");
+        builder.add_edge("C", "D");
+        builder.add_edge("C", "H");
+        builder.add_edge("0", "1");
+        let dg = builder.clone().build_directed();
+        assert_eq!(
+            dg.get_leaves_under(["A", "0"]).unwrap(),
+            ["1", "H", "D", "B"]
+        );
+        assert_eq!(dg.get_leaves_under(["A"]).unwrap(), ["H", "D", "B"]);
+        assert_eq!(dg.get_leaves_under(["C"]).unwrap(), ["H", "D"]);
+    }
+
+    #[test]
+    fn dg_get_roots_over() {
+        let mut builder = DirectedGraphBuilder::new();
+        builder.add_edge("A", "B");
+        builder.add_edge("A", "C");
+        builder.add_edge("C", "D");
+        builder.add_edge("C", "H");
+        builder.add_edge("0", "1");
+        let dg = builder.clone().build_directed();
+        assert_eq!(dg.get_roots_over(["A", "0"]).unwrap(), ["0", "A"]);
+        assert_eq!(dg.get_roots_over(["H"]).unwrap(), ["A"]);
+        assert_eq!(dg.get_roots_over(["H", "C", "1"]).unwrap(), ["0", "A"]);
+    }
+
+    #[test]
+    fn dg_subset() {
+        let mut builder = DirectedGraphBuilder::new();
+        builder.add_edge("A", "B");
+        builder.add_edge("A", "C");
+        builder.add_edge("C", "D");
+        builder.add_edge("C", "H");
+        builder.add_edge("0", "1");
+        let dg = builder.clone().build_directed();
+        let dg2 = dg.subset("A").unwrap();
+        println!("{:?}", dg2);
+        // This should not include children on "0" since
+        // the subset has no concept of those relationships
+        assert_eq!(dg2.get_roots_over(["A"]).unwrap(), ["A"]);
+        assert_eq!(dg2.get_roots_over(["H"]).unwrap(), ["A"]);
+        assert_eq!(dg2.get_roots_over(["H", "C", "1"]).unwrap(), ["A"]);
     }
 }

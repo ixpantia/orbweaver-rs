@@ -1,5 +1,3 @@
-use crate::NodeId;
-
 #[derive(Debug)]
 pub struct GraphHasCycle;
 
@@ -15,28 +13,13 @@ impl std::fmt::Display for GraphHasCycle {
 impl std::error::Error for GraphHasCycle {}
 
 #[derive(Debug)]
-pub struct DuplicateNode(pub NodeId);
-
-impl std::fmt::Display for DuplicateNode {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "Unable to insert node, `{}` already exists",
-            self.0.as_ref()
-        )
-    }
-}
-
-impl std::error::Error for DuplicateNode {}
-
-#[derive(Debug)]
 pub enum GraphInteractionError {
-    NodeNotExist(NodeId),
+    NodeNotExist(Box<str>),
 }
 
 impl GraphInteractionError {
     pub(crate) fn node_not_exists(id: impl AsRef<str>) -> Self {
-        Self::NodeNotExist(NodeId::from(id.as_ref()))
+        Self::NodeNotExist(id.as_ref().into())
     }
 }
 
@@ -44,7 +27,7 @@ impl std::fmt::Display for GraphInteractionError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::NodeNotExist(node_id) => {
-                write!(f, "Node `{}` does not exist", node_id.as_ref())
+                write!(f, "Node `{}` does not exist", node_id)
             }
         }
     }
