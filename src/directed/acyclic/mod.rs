@@ -4,12 +4,25 @@ mod topological_sort;
 use serde::{Deserialize, Serialize};
 use topological_sort::topological_sort;
 
-#[derive(Debug)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct DirectedAcyclicGraph {
     #[cfg_attr(feature = "serde", serde(flatten))]
     pub(crate) dg: Box<DirectedGraph>,
     pub(crate) topological_sort: Vec<u32>,
+}
+
+impl std::fmt::Debug for DirectedAcyclicGraph {
+    #[inline]
+    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
+        writeln!(f, "|   Parent   |    Child   |")?;
+        writeln!(f, "| ---------- | ---------- |")?;
+        for (parent, children) in self.dg.children_map.iter() {
+            for child in children {
+                writeln!(f, "| {:0>10} | {:0>10} |", parent, child)?;
+            }
+        }
+        Ok(())
+    }
 }
 
 impl Clone for DirectedAcyclicGraph {
