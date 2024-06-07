@@ -340,7 +340,10 @@ impl DirectedGraph {
             .iter()
             .filter(|&&child| {
                 self.parents_u32(&[child], &mut parents);
-                parents.iter().any(|parent| selected.contains(parent)).not()
+                parents
+                    .drain(..)
+                    .any(|parent| selected.contains(&parent))
+                    .not()
             })
             .copied()
             .collect::<Vec<_>>();
@@ -641,6 +644,19 @@ mod tests {
         assert_eq!(
             dg.least_common_parents(["A", "B", "C", "D"]).unwrap(),
             ["A"]
+        );
+
+        let mut builder = DirectedGraphBuilder::new();
+        builder.add_edge("A", "B");
+        builder.add_edge("B", "C");
+        builder.add_edge("C", "D");
+        builder.add_edge("C", "E");
+        builder.add_edge("F", "D");
+        let dg = builder.clone().build_directed();
+        assert_eq!(
+            dg.least_common_parents(["A", "B", "C", "D", "E", "F"])
+                .unwrap(),
+            ["A", "F"]
         );
     }
 
