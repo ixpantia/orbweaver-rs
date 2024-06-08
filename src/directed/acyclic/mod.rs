@@ -57,7 +57,7 @@ impl DirectedAcyclicGraph {
         let to = self.get_internal(to)?;
 
         if from == to {
-            return Ok(vec![self.resolve(from)?]);
+            return Ok(vec![self.resolve(from)]);
         }
 
         let topo_order = self.topological_sort.as_slice();
@@ -85,7 +85,7 @@ impl DirectedAcyclicGraph {
                 current = node_id;
                 if current == from {
                     path.reverse();
-                    return self.resolve_mul(path);
+                    return Ok(self.resolve_mul(path));
                 }
             }
         }
@@ -155,10 +155,10 @@ impl DirectedAcyclicGraph {
             &mut children,
         );
 
-        all_paths
+        Ok(all_paths
             .into_iter()
             .map(|path| self.resolve_mul(path))
-            .collect()
+            .collect())
     }
 
     pub fn subset(&self, node: impl AsRef<str>) -> GraphInteractionResult<DirectedAcyclicGraph> {

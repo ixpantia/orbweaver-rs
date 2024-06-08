@@ -16,7 +16,7 @@ pub fn download() -> DirectedGraph {
                 builder.add_edge(p, c);
             }
         });
-    builder.build()
+    builder.build_directed()
 }
 
 pub fn criterion_benchmark(c: &mut Criterion) {

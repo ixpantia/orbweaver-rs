@@ -15,6 +15,7 @@ impl std::error::Error for GraphHasCycle {}
 #[derive(Debug)]
 pub enum GraphInteractionError {
     NodeNotExist(Box<str>),
+    InternalResolve(u32),
 }
 
 impl GraphInteractionError {
@@ -28,6 +29,9 @@ impl std::fmt::Display for GraphInteractionError {
         match self {
             Self::NodeNotExist(node_id) => {
                 write!(f, "Node `{}` does not exist", node_id)
+            }
+            Self::InternalResolve(symbol) => {
+                write!(f, "Internal symbol `{}` does not exist", symbol)
             }
         }
     }
