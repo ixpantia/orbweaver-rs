@@ -10,7 +10,7 @@ use string_interner::StringInterner;
 use self::acyclic::DirectedAcyclicGraph;
 use self::get_rel2_on_rel1::get_values_on_rel_map;
 use crate::prelude::*;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::ops::Not;
 use std::sync::Arc;
 
@@ -279,7 +279,6 @@ impl DirectedGraph {
             let mut path = Vec::new();
             let mut current_id = goal_id;
             path.push(current_id);
-
             while current_id != start_id {
                 if let Some(parent_pair) = parents.iter().find(|(node, _)| *node == current_id) {
                     current_id = parent_pair.1;
@@ -300,15 +299,15 @@ impl DirectedGraph {
             return Ok(vec![self.resolve(from)]);
         }
 
-        let mut queue = Vec::new();
+        let mut queue = VecDeque::new();
         let mut visited = Vec::new();
         let mut parents = Vec::new(); // To track the path back to the start node
 
         // Initialize
-        queue.push(from);
+        queue.push_back(from);
         visited.push(from);
 
-        while let Some(current) = queue.pop() {
+        while let Some(current) = queue.pop_front() {
             if let Some(children) = self.children_map.get(&current) {
                 for &child in children {
                     if !visited.contains(&child) {
@@ -319,7 +318,7 @@ impl DirectedGraph {
                             // If goal found, construct the path from parents
                             return Ok(self.resolve_mul(construct_path(&parents, from, to)));
                         }
-                        queue.push(child);
+                        queue.push_back(child);
                     }
                 }
             }

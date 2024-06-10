@@ -48,10 +48,6 @@ pub fn criterion_benchmark(c: &mut Criterion) {
         b.iter(|| graph.has_parents([black_box("11"), black_box("1")]))
     });
 
-    c.bench_function("dg_find_path", |b| {
-        b.iter(|| graph.find_path(black_box("1"), black_box("11")))
-    });
-
     c.bench_function("dg_get_all_leaves", |b| b.iter(|| graph.get_all_leaves()));
 
     c.bench_function("dg_get_leaves_under", |b| {
@@ -66,6 +62,10 @@ pub fn criterion_benchmark(c: &mut Criterion) {
 
     c.bench_function("dg_subset_graph", |b| {
         b.iter(|| graph.subset(black_box("11")))
+    });
+
+    c.bench_function("dg_find_path", |b| {
+        b.iter(|| graph.find_path(black_box("1"), black_box("378762")))
     });
 }
 
