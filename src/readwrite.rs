@@ -20,7 +20,7 @@ macro_rules! impl_read_write {
                 serde_json::to_writer_pretty(writer, self)
             }
 
-            pub fn from_json<R>(&self, reader: R) -> Result<Self, serde_json::Error>
+            pub fn from_json<R>(reader: R) -> Result<Self, serde_json::Error>
             where
                 R: std::io::Read,
             {
