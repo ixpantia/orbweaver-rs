@@ -148,13 +148,32 @@ pub struct DirectedGraph {
 impl std::fmt::Debug for DirectedGraph {
     #[inline]
     fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
+        let n_nodes = self.children_map.len();
+        let n_edges = self.n_edges;
+        let n_roots = self.roots.len();
+        let n_leaves = self.leaves.len();
+        writeln!(f, "# of nodes: {n_nodes}")?;
+        writeln!(f, "# of edges: {n_edges}")?;
+        writeln!(f, "# of roots: {n_roots}")?;
+        writeln!(f, "# of leaves: {n_leaves}")?;
+        writeln!(f)?;
         writeln!(f, "|   Parent   |    Child   |")?;
         writeln!(f, "| ---------- | ---------- |")?;
-        for (parent, children) in self.children_map.iter() {
+        let mut n_printed = 0;
+        'outer: for (parent, children) in self.children_map.iter() {
             for child in children {
+                n_printed += 1;
                 writeln!(f, "| {:0>10} | {:0>10} |", parent, child)?;
+                if n_printed == 10 {
+                    break 'outer;
+                }
             }
         }
+
+        if n_nodes > 10 {
+            writeln!(f, "Ommited {} nodes", n_nodes - 10)?;
+        }
+
         Ok(())
     }
 }
@@ -714,5 +733,30 @@ mod tests {
         assert_eq!(dg2.get_roots_over(["A"]).unwrap(), ["A"]);
         assert_eq!(dg2.get_roots_over(["H"]).unwrap(), ["A"]);
         assert_eq!(dg2.get_roots_over(["H", "C", "1"]).unwrap(), ["A"]);
+    }
+
+    #[test]
+    fn test_debug() {
+        let mut builder = DirectedGraphBuilder::new();
+        builder.add_edge("1", "2");
+        builder.add_edge("2", "3");
+        builder.add_edge("3", "4");
+        builder.add_edge("4", "5");
+        builder.add_edge("5", "6");
+        builder.add_edge("6", "7");
+        builder.add_edge("7", "8");
+        builder.add_edge("8", "9");
+        builder.add_edge("9", "10");
+        builder.add_edge("10", "11");
+        builder.add_edge("11", "12");
+        builder.add_edge("12", "13");
+        let dg = builder.build_directed();
+
+        let actual = format!("{:?}", dg);
+
+        assert_eq!(
+            actual,
+            "# of nodes: 12\n# of edges: 12\n# of roots: 1\n# of leaves: 1\n\n|   Parent   |    Child   |\n| ---------- | ---------- |\n| 0000000010 | 0000000011 |\n| 0000000007 | 0000000008 |\n| 0000000004 | 0000000005 |\n| 0000000001 | 0000000002 |\n| 0000000011 | 0000000012 |\n| 0000000008 | 0000000009 |\n| 0000000005 | 0000000006 |\n| 0000000002 | 0000000003 |\n| 0000000012 | 0000000013 |\n| 0000000009 | 0000000010 |\nOmmited 2 nodes\n"
+        )
     }
 }
