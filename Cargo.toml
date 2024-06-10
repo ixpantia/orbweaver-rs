@@ -1,6 +1,6 @@
 [package]
 name = "orbweaver"
-version = "0.5.5"
+version = "0.5.6"
 edition = "2021"
 authors = ["ixpantia <hola@ixpantia.com>", "Andrés F. Quintero <andres@ixpantia.com>"]
 description = "Crate designed for effortless construction and analysis of graph data structures."
