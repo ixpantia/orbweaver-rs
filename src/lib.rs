@@ -1,5 +1,6 @@
 pub mod directed;
 pub mod error;
+pub mod readwrite;
 
 // Prelude of data types and functionality.
 pub mod prelude {

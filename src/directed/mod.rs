@@ -3,6 +3,7 @@ mod get_rel2_on_rel1;
 
 use fxhash::FxBuildHasher;
 use rayon::prelude::*;
+#[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use string_interner::backend::BucketBackend;
 use string_interner::StringInterner;

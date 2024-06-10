@@ -1,6 +1,7 @@
 use crate::{directed::DirectedGraph, prelude::*};
 use std::ops::Deref;
 mod topological_sort;
+#[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use topological_sort::topological_sort;
 
