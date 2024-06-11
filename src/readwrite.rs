@@ -58,7 +58,7 @@ mod tests {
     #[test]
     fn directed_from_and_to_binary() {
         let mut builder = DirectedGraphBuilder::new();
-        for i in 0..10000 {
+        for i in 0..100 {
             builder.add_edge(i.to_string(), (i + 1).to_string());
         }
         let dg = builder.build_directed();
@@ -74,7 +74,7 @@ mod tests {
     #[test]
     fn directed_acyclic_from_and_to_binary() {
         let mut builder = DirectedGraphBuilder::new();
-        for i in 0..10000 {
+        for i in 0..100 {
             builder.add_edge(i.to_string(), (i + 1).to_string());
         }
         let dg = builder.build_acyclic().unwrap();

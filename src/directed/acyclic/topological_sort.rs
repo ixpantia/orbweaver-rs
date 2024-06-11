@@ -13,16 +13,10 @@ pub fn topological_sort(dg: &DirectedGraph) -> Result<Vec<u32>, GraphHasCycle> {
         for parent in parents.drain(..) {
             // We need to manually remove this edge
             if let Some(children) = dg.children_map.get_mut(&parent) {
-                if let Some(index) = children.iter().position(|&child| child == node) {
-                    children.remove(index);
-                }
+                children.remove(&node);
             }
             if let Some(node_parents) = dg.parent_map.get_mut(&node) {
-                if let Some(index) = node_parents
-                    .iter()
-                    .position(|&node_parent| node_parent == parent)
-                {
-                    node_parents.remove(index);
+                if node_parents.remove(&parent) {
                     dg.n_edges -= 1;
                 }
             }

@@ -98,23 +98,23 @@ impl DirectedGraphBuilder {
         let roots = find_roots(&unique_parents, &unique_children);
 
         // Maps parents to their children
-        let mut children_map = HashMap::<u32, Vec<u32>, _>::with_hasher(FxBuildHasher::default());
+        let mut children_map = HashMap::<u32, HashSet<_, _>, _>::default();
 
         for i in 0..self.parents.len() {
             children_map
                 .entry(self.parents[i])
                 .or_default()
-                .push(self.children[i]);
+                .insert(self.children[i]);
         }
 
         // Maps children to their parents
-        let mut parent_map = HashMap::<u32, Vec<u32>, _>::with_hasher(FxBuildHasher::default());
+        let mut parent_map = HashMap::<u32, HashSet<_, _>, _>::default();
 
         for i in 0..self.parents.len() {
             parent_map
                 .entry(self.children[i])
                 .or_default()
-                .push(self.parents[i]);
+                .insert(self.parents[i]);
         }
 
         DirectedGraph {
@@ -148,10 +148,10 @@ pub struct DirectedGraph {
     pub(crate) nodes: Vec<u32>,
     /// Maps parents to their children
     /// Key: Parent  | Value: Children
-    pub(crate) children_map: HashMap<u32, Vec<u32>, FxBuildHasher>,
+    pub(crate) children_map: HashMap<u32, HashSet<u32, FxBuildHasher>, FxBuildHasher>,
     /// Maps children to their parents
     /// Key: Child | Value: Parents
-    pub(crate) parent_map: HashMap<u32, Vec<u32>, FxBuildHasher>,
+    pub(crate) parent_map: HashMap<u32, HashSet<u32, FxBuildHasher>, FxBuildHasher>,
     pub(crate) n_edges: usize,
 }
 
@@ -460,8 +460,8 @@ impl DirectedGraph {
     {
         // If we have a parent we add the relationship
         if let Some(parent) = parent {
-            new_dg.children_map.entry(parent).or_default().push(node);
-            new_dg.parent_map.entry(node).or_default().push(parent);
+            new_dg.children_map.entry(parent).or_default().insert(node);
+            new_dg.parent_map.entry(node).or_default().insert(parent);
             new_dg.n_edges += 1;
         }
 
@@ -657,7 +657,7 @@ mod tests {
         builder.add_path(["A", "H", "D"]);
         let dg = builder.clone().build_directed();
         assert_eq!(dg.find_path("A", "D").unwrap(), ["A", "H", "D"]);
-        assert_eq!(dg.children(["A"]).unwrap(), ["B", "H"]);
+        assert_eq!(dg.children(["A"]).unwrap(), ["H", "B"]);
     }
 
     #[test]
