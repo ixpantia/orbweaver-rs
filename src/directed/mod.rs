@@ -19,7 +19,7 @@ use std::sync::Arc;
 pub struct DirectedGraphBuilder {
     pub(crate) parents: Vec<u32>,
     pub(crate) children: Vec<u32>,
-    pub(crate) nodes: StringInterner<BucketBackend, FxBuildHasher>,
+    pub(crate) interner: StringInterner<BucketBackend, FxBuildHasher>,
     pub(crate) n_edges: usize,
 }
 
@@ -48,7 +48,7 @@ fn find_roots(parents: &[u32], children: &[u32]) -> Vec<u32> {
 impl DirectedGraphBuilder {
     pub fn new() -> Self {
         DirectedGraphBuilder {
-            nodes: StringInterner::with_hasher(FxBuildHasher::default()),
+            interner: StringInterner::with_hasher(FxBuildHasher::default()),
             children: Vec::new(),
             parents: Vec::new(),
             n_edges: 0,
@@ -57,7 +57,7 @@ impl DirectedGraphBuilder {
 
     #[inline(always)]
     pub(crate) fn get_or_intern(&mut self, val: impl AsRef<str>) -> u32 {
-        unsafe { std::mem::transmute(self.nodes.get_or_intern(val)) }
+        unsafe { std::mem::transmute(self.interner.get_or_intern(val)) }
     }
     pub fn add_edge(&mut self, from: impl AsRef<str>, to: impl AsRef<str>) -> &mut Self {
         let from = self.get_or_intern(&from);
@@ -87,6 +87,13 @@ impl DirectedGraphBuilder {
         unique_children.dedup();
         unique_parents.shrink_to_fit();
 
+        let mut nodes = Vec::new();
+        nodes.extend_from_slice(&unique_parents);
+        nodes.extend_from_slice(&unique_children);
+        nodes.sort_unstable();
+        nodes.dedup();
+        nodes.shrink_to_fit();
+
         let leaves = find_leaves(&unique_parents, &unique_children);
         let roots = find_roots(&unique_parents, &unique_children);
 
@@ -111,9 +118,10 @@ impl DirectedGraphBuilder {
         }
 
         DirectedGraph {
-            nodes: Arc::new(self.nodes),
+            interner: Arc::new(self.interner),
             leaves,
             roots,
+            nodes,
             children_map,
             parent_map,
             n_edges: self.n_edges,
@@ -134,9 +142,10 @@ impl Default for DirectedGraphBuilder {
 #[derive(Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct DirectedGraph {
-    pub(crate) nodes: Arc<StringInterner<BucketBackend, FxBuildHasher>>,
+    pub(crate) interner: Arc<StringInterner<BucketBackend, FxBuildHasher>>,
     pub(crate) leaves: Vec<u32>,
     pub(crate) roots: Vec<u32>,
+    pub(crate) nodes: Vec<u32>,
     /// Maps parents to their children
     /// Key: Parent  | Value: Children
     pub(crate) children_map: HashMap<u32, Vec<u32>, FxBuildHasher>,
@@ -182,7 +191,7 @@ impl std::fmt::Debug for DirectedGraph {
 impl DirectedGraph {
     #[inline(always)]
     pub(crate) fn resolve(&self, val: u32) -> &str {
-        unsafe { self.nodes.resolve_unchecked(std::mem::transmute(val)) }
+        unsafe { self.interner.resolve_unchecked(std::mem::transmute(val)) }
     }
 
     #[inline(always)]
@@ -192,7 +201,7 @@ impl DirectedGraph {
 
     #[inline(always)]
     pub(crate) fn get_internal(&self, val: impl AsRef<str>) -> GraphInteractionResult<u32> {
-        self.nodes
+        self.interner
             .get(val.as_ref())
             .map(|v| unsafe { std::mem::transmute(v) })
             .ok_or_else(|| GraphInteractionError::node_not_exists(val))
@@ -479,7 +488,7 @@ impl DirectedGraph {
 
     fn subset_u32(&self, node: u32) -> DirectedGraph {
         let mut new_dg = DirectedGraph {
-            nodes: self.nodes.clone(),
+            interner: self.interner.clone(),
             // When subsetting the graph the only root will be
             // the node we select. This is because we are selecting
             // it and all their dependants.
@@ -487,12 +496,16 @@ impl DirectedGraph {
             leaves: Vec::new(),
             children_map: HashMap::default(),
             parent_map: HashMap::default(),
+            nodes: Vec::new(),
             n_edges: 0,
         };
 
         let mut visited = HashSet::new();
 
         self.subset_recursive(None, node, &mut new_dg, &mut visited);
+
+        let nodes = new_dg.parent_map.keys().copied().collect();
+        new_dg.nodes = nodes;
 
         new_dg
     }
@@ -501,6 +514,10 @@ impl DirectedGraph {
     /// node.
     pub fn subset(&self, node: impl AsRef<str>) -> GraphInteractionResult<DirectedGraph> {
         self.get_internal(node).map(|node| self.subset_u32(node))
+    }
+
+    pub fn nodes(&self) -> Vec<&str> {
+        self.resolve_mul(self.nodes.iter().copied())
     }
 }
 
