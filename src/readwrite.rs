@@ -1,8 +1,27 @@
 #[cfg(feature = "binary")]
-use base64::engine::general_purpose;
+use flate2::{read::ZlibDecoder, write::ZlibEncoder, Compression};
 
 #[cfg(feature = "binary")]
-use flate2::{read::ZlibDecoder, write::ZlibEncoder, Compression};
+struct Base64Safe<W: std::io::Write>(W);
+
+#[cfg(feature = "binary")]
+impl<W: std::io::Write> std::io::Write for Base64Safe<W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.write(buf)
+    }
+    fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
+        if let Err(e) = self.0.write_all(buf) {
+            match e.kind() {
+                std::io::ErrorKind::WriteZero => return Ok(()),
+                _ => return Err(e),
+            }
+        }
+        Ok(())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.0.flush()
+    }
+}
 
 macro_rules! impl_read_write {
     // `()` indicates that the macro takes no argument.
@@ -13,10 +32,7 @@ macro_rules! impl_read_write {
             where
                 W: std::io::Write,
             {
-                let writer = base64::write::EncoderWriter::new(
-                    ZlibEncoder::new(writer, Compression::default()),
-                    &general_purpose::STANDARD,
-                );
+                let writer = ZlibEncoder::new(writer, Compression::default());
                 serde_cbor::to_writer(writer, self)
             }
 
@@ -24,10 +40,7 @@ macro_rules! impl_read_write {
             where
                 R: std::io::Read,
             {
-                let reader = base64::read::DecoderReader::new(
-                    ZlibDecoder::new(reader),
-                    &general_purpose::STANDARD,
-                );
+                let reader = ZlibDecoder::new(reader);
 
                 serde_cbor::from_reader(reader)
             }
@@ -45,18 +58,9 @@ mod tests {
     #[test]
     fn directed_from_and_to_binary() {
         let mut builder = DirectedGraphBuilder::new();
-        builder.add_edge("1", "2");
-        builder.add_edge("2", "3");
-        builder.add_edge("3", "4");
-        builder.add_edge("4", "5");
-        builder.add_edge("5", "6");
-        builder.add_edge("6", "7");
-        builder.add_edge("7", "8");
-        builder.add_edge("8", "9");
-        builder.add_edge("9", "10");
-        builder.add_edge("10", "11");
-        builder.add_edge("11", "12");
-        builder.add_edge("12", "13");
+        for i in 0..10000 {
+            builder.add_edge(i.to_string(), (i + 1).to_string());
+        }
         let dg = builder.build_directed();
 
         let mut buffer = Vec::new();
@@ -70,18 +74,9 @@ mod tests {
     #[test]
     fn directed_acyclic_from_and_to_binary() {
         let mut builder = DirectedGraphBuilder::new();
-        builder.add_edge("1", "2");
-        builder.add_edge("2", "3");
-        builder.add_edge("3", "4");
-        builder.add_edge("4", "5");
-        builder.add_edge("5", "6");
-        builder.add_edge("6", "7");
-        builder.add_edge("7", "8");
-        builder.add_edge("8", "9");
-        builder.add_edge("9", "10");
-        builder.add_edge("10", "11");
-        builder.add_edge("11", "12");
-        builder.add_edge("12", "13");
+        for i in 0..10000 {
+            builder.add_edge(i.to_string(), (i + 1).to_string());
+        }
         let dg = builder.build_acyclic().unwrap();
 
         let mut buffer = Vec::new();

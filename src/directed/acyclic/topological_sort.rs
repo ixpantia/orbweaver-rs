@@ -6,13 +6,7 @@ pub fn topological_sort(dg: &DirectedGraph) -> Result<Vec<u32>, GraphHasCycle> {
     let mut no_deps = dg.leaves.clone();
     let mut parents = Vec::new();
 
-    let mut x = 0;
-
     while let Some(node) = no_deps.pop() {
-        if x > 100 {
-            panic!()
-        }
-        x += 1;
         res.push(node);
 
         dg.parents_u32(&[node], &mut parents);
