@@ -63,6 +63,19 @@ mod tests {
     }
 
     #[test]
+    fn test_topologically_sort_paths() {
+        let mut builder = DirectedGraphBuilder::new();
+
+        builder.add_path(["Hello", "World"]);
+        builder.add_path(["Hello", "Everybody", "Andrés"]);
+        builder.add_path(["Hello", "Everybody", "Andrea"]);
+
+        let graph = builder.build_directed();
+
+        assert!(topological_sort(&graph).is_ok());
+    }
+
+    #[test]
     fn test_topologically_sort_non_acyclic() {
         let mut builder = DirectedGraphBuilder::new();
         let _ = builder.add_edge("1", "2");

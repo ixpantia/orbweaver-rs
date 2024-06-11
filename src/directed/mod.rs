@@ -20,7 +20,6 @@ pub struct DirectedGraphBuilder {
     pub(crate) parents: Vec<u32>,
     pub(crate) children: Vec<u32>,
     pub(crate) interner: StringInterner<BucketBackend, FxBuildHasher>,
-    pub(crate) n_edges: usize,
 }
 
 fn find_leaves(parents: &[u32], children: &[u32]) -> Vec<u32> {
@@ -51,7 +50,6 @@ impl DirectedGraphBuilder {
             interner: StringInterner::with_hasher(FxBuildHasher::default()),
             children: Vec::new(),
             parents: Vec::new(),
-            n_edges: 0,
         }
     }
 
@@ -64,7 +62,6 @@ impl DirectedGraphBuilder {
         let to = self.get_or_intern(&to);
         self.parents.push(from);
         self.children.push(to);
-        self.n_edges += 1;
         self
     }
     pub fn add_path(&mut self, path: impl IntoIterator<Item = impl AsRef<str>>) -> &mut Self {
@@ -97,14 +94,19 @@ impl DirectedGraphBuilder {
         let leaves = find_leaves(&unique_parents, &unique_children);
         let roots = find_roots(&unique_parents, &unique_children);
 
+        let mut n_edges = 0;
+
         // Maps parents to their children
         let mut children_map = HashMap::<u32, HashSet<_, _>, _>::default();
 
         for i in 0..self.parents.len() {
-            children_map
+            let was_added = children_map
                 .entry(self.parents[i])
                 .or_default()
                 .insert(self.children[i]);
+            if was_added {
+                n_edges += 1;
+            }
         }
 
         // Maps children to their parents
@@ -124,7 +126,7 @@ impl DirectedGraphBuilder {
             nodes,
             children_map,
             parent_map,
-            n_edges: self.n_edges,
+            n_edges,
         }
     }
 
