@@ -1,6 +1,6 @@
 [package]
 name = "orbweaver"
-version = "0.7.0"
+version = "0.8.0"
 edition = "2021"
 authors = ["ixpantia <hola@ixpantia.com>", "Andrés F. Quintero <andres@ixpantia.com>"]
 description = "Crate designed for effortless construction and analysis of graph data structures."
@@ -17,15 +17,14 @@ fxhash = "0.2.1"
 string-interner = { version = "0.17", features = ["serde"] }
 rayon = "1.10.0"
 serde = { version = "1.0.202", features = ["derive", "rc"], optional = true }
-serde_json = { version = "1.0.117", optional = true }
 serde_cbor = { version = "0.11.2", optional = true }
 flate2 = { version = "1.0", optional = true }
+base64 = { version = "0.22.1", optional = true }
 
 [features]
 serde = ["dep:serde"]
-json = ["serde", "dep:serde_json"]
-binary = ["serde", "dep:serde_cbor", "dep:flate2"]
-default = ["serde", "json", "binary"]
+binary = ["serde", "dep:serde_cbor", "dep:flate2", "dep:base64"]
+default = ["serde", "binary"]
 
 [[bench]]
 name = "directed_graph"
