@@ -331,18 +331,17 @@ impl DirectedGraph {
         }
 
         let mut queue = VecDeque::new();
-        let mut visited = Vec::new();
+        let mut visited = HashSet::with_hasher(FxBuildHasher::default());
         let mut parents = Vec::new(); // To track the path back to the start node
 
         // Initialize
         queue.push_back(from);
-        visited.push(from);
+        visited.insert(from);
 
         while let Some(current) = queue.pop_front() {
             if let Some(children) = self.children_map.get(&current) {
                 for &child in children {
-                    if !visited.contains(&child) {
-                        visited.push(child);
+                    if visited.insert(child) {
                         parents.push((child, current));
 
                         if child == to {
@@ -388,15 +387,14 @@ impl DirectedGraph {
 
     fn get_leaves_under_u32(&self, nodes: &[u32]) -> Vec<u32> {
         let mut leaves = Vec::new();
-        let mut visited = HashSet::new();
+        let mut visited = HashSet::with_hasher(FxBuildHasher::default());
         let mut to_visit = nodes.to_vec();
 
         while let Some(node) = to_visit.pop() {
-            if visited.contains(&node) {
+            // If it was already present we continue
+            if !visited.insert(node) {
                 continue;
             }
-
-            visited.insert(node);
 
             match self.children_map.get(&node) {
                 Some(children) => children.iter().for_each(|child| to_visit.push(*child)),
@@ -423,15 +421,14 @@ impl DirectedGraph {
 
     fn get_roots_over_u32(&self, nodes: &[u32]) -> Vec<u32> {
         let mut roots = Vec::new();
-        let mut visited = HashSet::new();
+        let mut visited = HashSet::with_hasher(FxBuildHasher::default());
         let mut to_visit = nodes.to_vec();
 
         while let Some(node) = to_visit.pop() {
-            if visited.contains(&node) {
+            // If it was already present we continue
+            if !visited.insert(node) {
                 continue;
             }
-
-            visited.insert(node);
 
             match self.parent_map.get(&node) {
                 Some(parents) => parents.iter().for_each(|parent| to_visit.push(*parent)),
@@ -469,13 +466,9 @@ impl DirectedGraph {
 
         // If we have already visited this node
         // we return :)
-        if visited.contains(&node) {
+        if !visited.insert(node) {
             return;
         }
-
-        // We insert this node into visited so
-        // we dont traverse it again
-        visited.insert(node);
 
         // If this node has children then
         // we recurse, else we insert it
