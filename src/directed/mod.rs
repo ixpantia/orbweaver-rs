@@ -514,6 +514,15 @@ impl DirectedGraph {
     pub fn nodes(&self) -> Vec<&str> {
         self.resolve_mul(self.nodes.iter().copied())
     }
+
+    pub fn len(&self) -> usize {
+        self.nodes.len()
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 }
 
 #[cfg(test)]
