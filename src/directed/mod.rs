@@ -501,6 +501,9 @@ impl DirectedGraph {
 
         let nodes = new_dg.parent_map.keys().copied().collect();
         new_dg.nodes = nodes;
+        new_dg.nodes.push(node);
+        new_dg.nodes.sort_unstable();
+        new_dg.nodes.dedup();
 
         new_dg
     }
@@ -755,6 +758,7 @@ mod tests {
         assert_eq!(dg2.get_roots_over(["A"]).unwrap(), ["A"]);
         assert_eq!(dg2.get_roots_over(["H"]).unwrap(), ["A"]);
         assert_eq!(dg2.get_roots_over(["H", "C", "1"]).unwrap(), ["A"]);
+        assert_eq!(dg2.nodes(), ["A", "B", "C", "D", "H"]);
     }
 
     #[test]
