@@ -398,7 +398,8 @@ impl DirectedGraph {
 
             match self.children_map.get(&node) {
                 Some(children) => children.iter().for_each(|child| to_visit.push(*child)),
-                None => leaves.push(node),
+                None if self.leaves.binary_search(&node).is_ok() => leaves.push(node),
+                None => (),
             }
         }
 
@@ -432,7 +433,7 @@ impl DirectedGraph {
             match self.parent_map.get(&node) {
                 Some(parents) => parents.iter().for_each(|parent| to_visit.push(*parent)),
                 None if self.roots.binary_search(&node).is_ok() => roots.push(node),
-                _ => (),
+                None => (),
             }
         }
 
@@ -445,39 +446,6 @@ impl DirectedGraph {
     ) -> GraphInteractionResult<Vec<&str>> {
         let nodes = self.get_internal_mul(nodes)?;
         Ok(self.resolve_mul(self.get_roots_over_u32(&nodes)))
-    }
-    /// Private, do not use outside
-    fn subset_recursive<'a, 'b>(
-        &'a self,
-        parent: Option<u32>,
-        node: u32,
-        new_dg: &'b mut DirectedGraph,
-        visited: &'b mut HashSet<u32>,
-    ) where
-        'a: 'b,
-    {
-        // If we have a parent we add the relationship
-        if let Some(parent) = parent {
-            new_dg.children_map.entry(parent).or_default().insert(node);
-            new_dg.parent_map.entry(node).or_default().insert(parent);
-            new_dg.n_edges += 1;
-        }
-
-        // If we have already visited this node
-        // we return :)
-        if !visited.insert(node) {
-            return;
-        }
-
-        // If this node has children then
-        // we recurse, else we insert it
-        // as a leaf
-        match self.children_map.get(&node) {
-            None => new_dg.leaves.push(node),
-            Some(children) => children
-                .iter()
-                .for_each(|&child| self.subset_recursive(Some(node), child, new_dg, visited)),
-        }
     }
 
     fn subset_u32(&self, node: u32) -> DirectedGraph {
@@ -495,8 +463,37 @@ impl DirectedGraph {
         };
 
         let mut visited = HashSet::new();
+        let mut queue = VecDeque::new();
 
-        self.subset_recursive(None, node, &mut new_dg, &mut visited);
+        // Since the main value is a NonZeroU32
+        // we can use a 0 as None :D minor
+        // optimization
+        queue.push_back((0, node));
+
+        while let Some((parent, node)) = queue.pop_front() {
+            // If we have a parent we add the relationship
+            if parent != 0 {
+                new_dg.children_map.entry(parent).or_default().insert(node);
+                new_dg.parent_map.entry(node).or_default().insert(parent);
+                new_dg.n_edges += 1;
+            }
+
+            // If we have already visited this node
+            // we return :)
+            if !visited.insert(node) {
+                continue;
+            }
+
+            // If this node has children then
+            // we recurse, else we insert it
+            // as a leaf
+            match self.children_map.get(&node) {
+                None => new_dg.leaves.push(node),
+                Some(children) => children.iter().for_each(|&child| {
+                    queue.push_back((node, child));
+                }),
+            }
+        }
 
         let nodes = new_dg.parent_map.keys().copied().collect();
         new_dg.nodes = nodes;
@@ -759,7 +756,6 @@ mod tests {
         builder.add_edge("0", "1");
         let dg = builder.clone().build_directed();
         let dg2 = dg.subset("A").unwrap();
-        println!("{:?}", dg2);
         // This should not include children on "0" since
         // the subset has no concept of those relationships
         assert_eq!(dg2.get_roots_over(["A"]).unwrap(), ["A"]);

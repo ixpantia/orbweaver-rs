@@ -7,7 +7,7 @@ description = "Crate designed for effortless construction and analysis of graph 
 repository = "https://github.com/ixpantia/orbweaver-rs"
 license = "MIT"
 readme = "README.md"
-exclude = ["tests/", "benches/"]
+exclude = ["tests/", "benches/", "assets/"]
 
 [dev-dependencies]
 criterion = "0.5"
