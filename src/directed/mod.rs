@@ -398,8 +398,7 @@ impl DirectedGraph {
 
             match self.children_map.get(&node) {
                 Some(children) => children.iter().for_each(|child| to_visit.push(*child)),
-                None if self.leaves.binary_search(&node).is_ok() => leaves.push(node),
-                _ => (),
+                None => leaves.push(node),
             }
         }
 
@@ -502,8 +501,16 @@ impl DirectedGraph {
         let nodes = new_dg.parent_map.keys().copied().collect();
         new_dg.nodes = nodes;
         new_dg.nodes.push(node);
+
+        // Re order values
         new_dg.nodes.sort_unstable();
         new_dg.nodes.dedup();
+
+        new_dg.leaves.sort_unstable();
+        new_dg.leaves.dedup();
+
+        // There should only be one root in a subset
+        assert_eq!(new_dg.roots.len(), 1);
 
         new_dg
     }
