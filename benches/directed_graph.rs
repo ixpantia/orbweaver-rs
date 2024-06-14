@@ -1,6 +1,6 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use orbweaver::directed::{acyclic::DirectedAcyclicGraph, DirectedGraph, DirectedGraphBuilder};
-use std::io::{prelude::*, BufReader};
+use orbweaver::directed::{acyclic::DirectedAcyclicGraph, DirectedGraphBuilder};
+use std::io::{prelude::*};
 
 const MEDIUM_TXT_PATH: &str = "assets/medium.txt";
 
