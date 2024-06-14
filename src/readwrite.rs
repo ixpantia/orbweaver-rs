@@ -1,28 +1,6 @@
 #[cfg(feature = "binary")]
 use flate2::{read::ZlibDecoder, write::ZlibEncoder, Compression};
 
-#[cfg(feature = "binary")]
-struct Base64Safe<W: std::io::Write>(W);
-
-#[cfg(feature = "binary")]
-impl<W: std::io::Write> std::io::Write for Base64Safe<W> {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.0.write(buf)
-    }
-    fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
-        if let Err(e) = self.0.write_all(buf) {
-            match e.kind() {
-                std::io::ErrorKind::WriteZero => return Ok(()),
-                _ => return Err(e),
-            }
-        }
-        Ok(())
-    }
-    fn flush(&mut self) -> std::io::Result<()> {
-        self.0.flush()
-    }
-}
-
 macro_rules! impl_read_write {
     // `()` indicates that the macro takes no argument.
     ($struct:ty) => {
