@@ -1,15 +1,20 @@
 use orbweaver::prelude::*;
 
-const MEDIUM_TXT: &str = include_str!("medium.txt");
+const MEDIUM_TXT_PATH: &str = "assets/medium.txt";
 
 fn get_medium_graph() -> DirectedAcyclicGraph {
+    use std::io::BufRead;
     let mut builder = DirectedGraphBuilder::new();
-    MEDIUM_TXT
-        .lines()
-        .filter_map(|l| l.split_once('\t'))
-        .for_each(|(parent, child)| {
+    std::io::BufReader::new(
+        std::fs::File::open(MEDIUM_TXT_PATH).expect("Unable to read medium.txt"),
+    )
+    .lines()
+    .map_while(Result::ok)
+    .for_each(|l| {
+        if let Some((parent, child)) = l.split_once('\t') {
             builder.add_edge(parent, child);
-        });
+        }
+    });
 
     builder.build_acyclic().expect("This should work")
 }
