@@ -112,3 +112,7 @@ jobs:
           key: ${{ steps.target-cache-restore.outputs.cache-primary-key }}
       - name: cargo llvm-cov report
         run: cargo llvm-cov report --release --lcov --output-path lcov.info
+      - name: Upload coverage reports to Codecov
+        uses: codecov/codecov-action@v4.0.1
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
