@@ -13,7 +13,7 @@ pub(crate) fn get_values_on_rel_map<H: BuildHasher>(
 ) {
     ids.iter().for_each(|id| {
         if let Some(values) = map.get(id) {
-            values.iter().for_each(|val| out.push(*val))
+            out.extend(values.iter().copied());
         }
     })
 }
