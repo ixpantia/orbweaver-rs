@@ -5,8 +5,9 @@ use fxhash::FxBuildHasher;
 use rayon::prelude::*;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-use string_interner::backend::BucketBackend;
-use string_interner::StringInterner;
+//use string_interner::backend::BucketBackend;
+//use string_interner::StringInterner;
+use crate::interner::{InternerBuilder, Resolver};
 
 use self::acyclic::DirectedAcyclicGraph;
 use self::get_rel2_on_rel1::get_values_on_rel_map;
@@ -14,12 +15,13 @@ use crate::prelude::*;
 use std::cell::UnsafeCell;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::ops::Not;
+use std::rc::Rc;
 
 #[derive(Clone)]
 pub struct DirectedGraphBuilder {
     pub(crate) parents: Vec<u32>,
     pub(crate) children: Vec<u32>,
-    pub(crate) interner: StringInterner<BucketBackend, FxBuildHasher>,
+    pub(crate) interner: InternerBuilder,
 }
 
 #[derive(Default)]
@@ -36,7 +38,7 @@ pub(crate) struct InternalBufs {
 
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct DirectedGraph {
-    pub(crate) interner: StringInterner<BucketBackend, FxBuildHasher>,
+    pub(crate) interner: Rc<Resolver>,
     pub(crate) leaves: Vec<u32>,
     pub(crate) roots: Vec<u32>,
     pub(crate) nodes: Vec<u32>,
@@ -47,7 +49,7 @@ pub struct DirectedGraph {
     /// Key: Child | Value: Parents
     pub(crate) parent_map: HashMap<u32, HashSet<u32, FxBuildHasher>, FxBuildHasher>,
     pub(crate) n_edges: usize,
-    #[serde(skip_serializing, skip_deserializing)]
+    #[cfg_attr(feature = "serde", serde(skip_serializing, skip_deserializing))]
     pub(crate) buf: InternalBufs,
 }
 
@@ -76,7 +78,7 @@ fn find_roots(parents: &[u32], children: &[u32]) -> Vec<u32> {
 impl DirectedGraphBuilder {
     pub fn new() -> Self {
         DirectedGraphBuilder {
-            interner: StringInterner::with_hasher(FxBuildHasher::default()),
+            interner: InternerBuilder::new(),
             children: Vec::new(),
             parents: Vec::new(),
         }
@@ -149,7 +151,7 @@ impl DirectedGraphBuilder {
         }
 
         DirectedGraph {
-            interner: self.interner,
+            interner: Rc::new(self.interner.build()),
             leaves,
             roots,
             nodes,
@@ -250,19 +252,19 @@ impl DirectedGraph {
 
     #[inline(always)]
     pub(crate) fn resolve(&self, val: u32) -> &str {
-        unsafe { self.interner.resolve_unchecked(std::mem::transmute(val)) }
+        unsafe { self.interner.resolve_unchecked(val) }
     }
 
     #[inline(always)]
-    pub(crate) fn resolve_mul(&self, nodes: impl IntoIterator<Item = u32>) -> Vec<&str> {
-        nodes.into_iter().map(|node| self.resolve(node)).collect()
+    pub(crate) fn resolve_mul_slice(&self, nodes: &[u32]) -> Vec<&str> {
+        unsafe { self.interner.resolve_many_unchecked_from_slice(nodes) }
     }
 
     #[inline(always)]
     pub(crate) fn get_internal(&self, val: impl AsRef<str>) -> GraphInteractionResult<u32> {
         self.interner
             .get(val.as_ref())
-            .map(|v| unsafe { std::mem::transmute(v) })
+            .map(|v| v.get())
             .ok_or_else(|| GraphInteractionError::node_not_exists(val))
     }
 
@@ -306,7 +308,7 @@ impl DirectedGraph {
         let res = unsafe { self.u32x1_vec_1() };
         self.get_internal_mul(nodes, nodes_buf)?;
         self.children_u32(nodes_buf, res);
-        Ok(self.resolve_mul(res.drain(..)))
+        Ok(self.resolve_mul_slice(res))
     }
 
     #[inline]
@@ -330,7 +332,7 @@ impl DirectedGraph {
         let res = unsafe { self.u32x1_vec_1() };
         self.get_internal_mul(nodes, nodes_buf)?;
         self.parents_u32(nodes_buf, res);
-        Ok(self.resolve_mul(res.drain(..)))
+        Ok(self.resolve_mul_slice(res))
     }
 
     pub fn has_parents(
@@ -420,7 +422,7 @@ impl DirectedGraph {
             }
         }
 
-        Ok(self.resolve_mul(path_buf.drain(..)))
+        Ok(self.resolve_mul_slice(path_buf))
     }
 
     /// Finds all paths on a DG using BFS
@@ -465,7 +467,7 @@ impl DirectedGraph {
         Ok(all_paths
             .split(|&n| n == PATH_DELIM)
             .filter(|p| !p.is_empty())
-            .map(|path| self.resolve_mul(path.iter().copied()))
+            .map(|path| self.resolve_mul_slice(path))
             .collect())
     }
 
@@ -496,11 +498,11 @@ impl DirectedGraph {
         least_common_parents.sort_unstable();
         least_common_parents.dedup();
 
-        Ok(self.resolve_mul(least_common_parents.iter().copied()))
+        Ok(self.resolve_mul_slice(least_common_parents))
     }
 
     pub fn get_all_leaves(&self) -> Vec<&str> {
-        self.resolve_mul(self.leaves.iter().copied())
+        self.resolve_mul_slice(&self.leaves)
     }
 
     fn get_leaves_under_u32(
@@ -533,11 +535,11 @@ impl DirectedGraph {
         let visited = unsafe { self.u32x1_set_0() };
         self.get_internal_mul(nodes, nodes_buf)?;
         self.get_leaves_under_u32(nodes_buf, leaves, visited);
-        Ok(self.resolve_mul(leaves.drain(..)))
+        Ok(self.resolve_mul_slice(leaves))
     }
 
     pub fn get_all_roots(&self) -> Vec<&str> {
-        self.resolve_mul(self.roots.iter().copied())
+        self.resolve_mul_slice(&self.roots)
     }
 
     fn get_roots_over_u32(
@@ -569,7 +571,7 @@ impl DirectedGraph {
         let visited = unsafe { self.u32x1_set_0() };
         self.get_internal_mul(nodes, nodes_buf)?;
         self.get_roots_over_u32(nodes_buf, roots, visited);
-        Ok(self.resolve_mul(roots.drain(..)))
+        Ok(self.resolve_mul_slice(roots))
     }
 
     fn subset_u32(&self, node: u32) -> DirectedGraph {
@@ -644,7 +646,7 @@ impl DirectedGraph {
     }
 
     pub fn nodes(&self) -> Vec<&str> {
-        self.resolve_mul(self.nodes.iter().copied())
+        self.resolve_mul_slice(&self.nodes)
     }
 
     pub fn len(&self) -> usize {

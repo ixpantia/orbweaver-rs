@@ -33,6 +33,7 @@ impl_read_write!(crate::prelude::DirectedAcyclicGraph);
 mod tests {
     use crate::prelude::{DirectedGraph, DirectedGraphBuilder};
 
+    #[cfg(feature = "binary")]
     #[test]
     fn directed_from_and_to_binary() {
         let mut builder = DirectedGraphBuilder::new();
@@ -49,6 +50,7 @@ mod tests {
         assert_eq!(format!("{:?}", dg), format!("{:?}", de_dg));
     }
 
+    #[cfg(feature = "binary")]
     #[test]
     fn directed_acyclic_from_and_to_binary() {
         let mut builder = DirectedGraphBuilder::new();
@@ -63,5 +65,8 @@ mod tests {
         let de_dg = DirectedGraph::from_binary(buffer.as_slice()).unwrap();
 
         assert_eq!(format!("{:?}", dg), format!("{:?}", de_dg));
+        assert_eq!(dg.nodes(), de_dg.nodes());
+        assert_eq!(dg.get_all_leaves(), de_dg.get_all_leaves());
+        assert_eq!(dg.get_all_roots(), de_dg.get_all_roots());
     }
 }
