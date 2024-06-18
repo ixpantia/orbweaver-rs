@@ -1,6 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use orbweaver::directed::{acyclic::DirectedAcyclicGraph, DirectedGraphBuilder};
-use std::io::{prelude::*};
 
 const MEDIUM_TXT_PATH: &str = "assets/medium.txt";
 
@@ -24,6 +23,7 @@ fn get_medium_graph() -> DirectedAcyclicGraph {
 pub fn criterion_benchmark(c: &mut Criterion) {
     let graph_dag = get_medium_graph();
     let graph_dg = graph_dag.clone().into_inner();
+    let graph_all_nodes = graph_dg.nodes();
 
     println!("Done building the graph!");
 
@@ -96,6 +96,10 @@ pub fn criterion_benchmark(c: &mut Criterion) {
                 black_box("eb85851afd251bd7c7eaf725d0d19360"),
             )
         })
+    });
+
+    c.bench_function("dg_least_common_parents", |b| {
+        b.iter(|| graph_dg.least_common_parents(black_box(&graph_all_nodes)))
     });
 
     c.bench_function("dag_find_path", |b| {
