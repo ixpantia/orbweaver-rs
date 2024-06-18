@@ -1,5 +1,5 @@
 use crate::{directed::DirectedGraph, prelude::*};
-use std::{ops::Deref};
+use std::ops::Deref;
 mod topological_sort;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -101,7 +101,7 @@ impl DirectedAcyclicGraph {
         Ok(all_paths
             .split(|&n| n == PATH_DELIM)
             .filter(|p| !p.is_empty())
-            .map(|path| self.resolve_mul(path.iter().copied()))
+            .map(|path| self.resolve_mul_slice(path))
             .collect())
     }
 

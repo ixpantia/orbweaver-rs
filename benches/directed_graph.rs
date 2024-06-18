@@ -27,6 +27,8 @@ pub fn criterion_benchmark(c: &mut Criterion) {
 
     println!("Done building the graph!");
 
+    c.bench_function("dg_get_nodes", |b| b.iter(|| graph_dg.nodes()));
+
     c.bench_function("dg_get_parents", |b| {
         b.iter(|| graph_dg.parents(black_box(["1f6a329de1d9c26602fe1ee8ce81ca98"])))
     });
