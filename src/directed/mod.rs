@@ -475,16 +475,18 @@ impl DirectedGraph {
     ) -> GraphInteractionResult<Vec<&str>> {
         // Declare used buffers
         let selected_buf = unsafe { self.u32x1_vec_0() };
+        let selected_buf_set = unsafe { self.u32x1_set_0() };
         let parents = unsafe { self.u32x1_vec_1() };
         let least_common_parents = unsafe { self.u32x1_vec_2() };
 
         self.get_internal_mul(selected, selected_buf)?;
+        selected_buf_set.extend(selected_buf.iter().copied());
 
         selected_buf.iter().for_each(|&child| {
             self.parents_u32(&[child], parents);
             let parent_not_in_selection = parents
                 .drain(..)
-                .any(|parent| selected_buf.contains(&parent))
+                .any(|parent| selected_buf_set.contains(&parent))
                 .not();
             if parent_not_in_selection {
                 least_common_parents.push(child);
