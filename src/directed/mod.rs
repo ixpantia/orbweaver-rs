@@ -11,15 +11,43 @@ use string_interner::StringInterner;
 use self::acyclic::DirectedAcyclicGraph;
 use self::get_rel2_on_rel1::get_values_on_rel_map;
 use crate::prelude::*;
+use std::cell::UnsafeCell;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::ops::Not;
-use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct DirectedGraphBuilder {
     pub(crate) parents: Vec<u32>,
     pub(crate) children: Vec<u32>,
     pub(crate) interner: StringInterner<BucketBackend, FxBuildHasher>,
+}
+
+#[derive(Default)]
+pub(crate) struct InternalBufs {
+    // Espacio en memoria para buffers
+    pub(crate) u32x1_vec_0: UnsafeCell<Vec<u32>>,
+    pub(crate) u32x1_vec_1: UnsafeCell<Vec<u32>>,
+    pub(crate) u32x1_vec_2: UnsafeCell<Vec<u32>>,
+    pub(crate) u32x2_vec_0: UnsafeCell<Vec<(u32, u32)>>,
+    pub(crate) u32x1_queue_0: UnsafeCell<VecDeque<u32>>,
+    pub(crate) u32x1_set_0: UnsafeCell<HashSet<u32, FxBuildHasher>>,
+}
+
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct DirectedGraph {
+    pub(crate) interner: StringInterner<BucketBackend, FxBuildHasher>,
+    pub(crate) leaves: Vec<u32>,
+    pub(crate) roots: Vec<u32>,
+    pub(crate) nodes: Vec<u32>,
+    /// Maps parents to their children
+    /// Key: Parent  | Value: Children
+    pub(crate) children_map: HashMap<u32, HashSet<u32, FxBuildHasher>, FxBuildHasher>,
+    /// Maps children to their parents
+    /// Key: Child | Value: Parents
+    pub(crate) parent_map: HashMap<u32, HashSet<u32, FxBuildHasher>, FxBuildHasher>,
+    pub(crate) n_edges: usize,
+    #[serde(skip_serializing, skip_deserializing)]
+    pub(crate) buf: InternalBufs,
 }
 
 fn find_leaves(parents: &[u32], children: &[u32]) -> Vec<u32> {
@@ -120,13 +148,14 @@ impl DirectedGraphBuilder {
         }
 
         DirectedGraph {
-            interner: Arc::new(self.interner),
+            interner: self.interner,
             leaves,
             roots,
             nodes,
             children_map,
             parent_map,
             n_edges,
+            buf: Default::default(),
         }
     }
 
@@ -141,20 +170,27 @@ impl Default for DirectedGraphBuilder {
     }
 }
 
-#[derive(Clone)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub struct DirectedGraph {
-    pub(crate) interner: Arc<StringInterner<BucketBackend, FxBuildHasher>>,
-    pub(crate) leaves: Vec<u32>,
-    pub(crate) roots: Vec<u32>,
-    pub(crate) nodes: Vec<u32>,
-    /// Maps parents to their children
-    /// Key: Parent  | Value: Children
-    pub(crate) children_map: HashMap<u32, HashSet<u32, FxBuildHasher>, FxBuildHasher>,
-    /// Maps children to their parents
-    /// Key: Child | Value: Parents
-    pub(crate) parent_map: HashMap<u32, HashSet<u32, FxBuildHasher>, FxBuildHasher>,
-    pub(crate) n_edges: usize,
+impl Clone for DirectedGraph {
+    fn clone(&self) -> Self {
+        let interner = self.interner.clone();
+        let leaves = self.leaves.clone();
+        let roots = self.roots.clone();
+        let nodes = self.nodes.clone();
+        let children_map = self.children_map.clone();
+        let parent_map = self.parent_map.clone();
+        let n_edges = self.n_edges;
+
+        DirectedGraph {
+            interner,
+            n_edges,
+            parent_map,
+            children_map,
+            nodes,
+            roots,
+            leaves,
+            buf: Default::default(),
+        }
+    }
 }
 
 impl std::fmt::Debug for DirectedGraph {
@@ -190,7 +226,26 @@ impl std::fmt::Debug for DirectedGraph {
     }
 }
 
+macro_rules! impl_buf {
+    ($name:ident, $ret:ty) => {
+        #[inline(always)]
+        #[allow(clippy::mut_from_ref)]
+        pub(crate) unsafe fn $name(&self) -> &mut $ret {
+            let ptr = unsafe { &mut *self.buf.$name.get() };
+            ptr.clear();
+            ptr
+        }
+    };
+}
+
 impl DirectedGraph {
+    impl_buf!(u32x1_vec_0, Vec<u32>);
+    impl_buf!(u32x1_vec_1, Vec<u32>);
+    impl_buf!(u32x1_vec_2, Vec<u32>);
+    impl_buf!(u32x2_vec_0, Vec<(u32, u32)>);
+    impl_buf!(u32x1_queue_0, VecDeque<u32>);
+    impl_buf!(u32x1_set_0, HashSet<u32, FxBuildHasher>);
+
     #[inline(always)]
     pub(crate) fn resolve(&self, val: u32) -> &str {
         unsafe { self.interner.resolve_unchecked(std::mem::transmute(val)) }
@@ -213,11 +268,12 @@ impl DirectedGraph {
     pub(crate) fn get_internal_mul(
         &self,
         nodes: impl IntoIterator<Item = impl AsRef<str>>,
-    ) -> GraphInteractionResult<Vec<u32>> {
-        nodes
-            .into_iter()
-            .map(|node| self.get_internal(node))
-            .collect()
+        buf: &mut Vec<u32>,
+    ) -> GraphInteractionResult<()> {
+        for node in nodes {
+            buf.push(self.get_internal(node)?);
+        }
+        Ok(())
     }
 
     pub(crate) fn edge_exists(&self, from: u32, to: u32) -> bool {
@@ -243,10 +299,11 @@ impl DirectedGraph {
         &self,
         nodes: impl IntoIterator<Item = impl AsRef<str>>,
     ) -> GraphInteractionResult<Vec<&str>> {
-        let mut res = Vec::new();
-        let nodes = self.get_internal_mul(nodes)?;
-        self.children_u32(&nodes, &mut res);
-        Ok(self.resolve_mul(res))
+        let nodes_buf = unsafe { self.u32x1_vec_0() };
+        let res = unsafe { self.u32x1_vec_1() };
+        self.get_internal_mul(nodes, nodes_buf)?;
+        self.children_u32(nodes_buf, res);
+        Ok(self.resolve_mul(res.drain(..)))
     }
 
     pub(crate) fn parents_u32(&self, ids: &[u32], out: &mut Vec<u32>) {
@@ -265,10 +322,11 @@ impl DirectedGraph {
         &self,
         nodes: impl IntoIterator<Item = impl AsRef<str>>,
     ) -> GraphInteractionResult<Vec<&str>> {
-        let mut res = Vec::new();
-        let nodes = self.get_internal_mul(nodes)?;
-        self.parents_u32(&nodes, &mut res);
-        Ok(self.resolve_mul(res))
+        let nodes_buf = unsafe { self.u32x1_vec_0() };
+        let res = unsafe { self.u32x1_vec_1() };
+        self.get_internal_mul(nodes, nodes_buf)?;
+        self.parents_u32(nodes_buf, res);
+        Ok(self.resolve_mul(res.drain(..)))
     }
 
     pub fn has_parents(
@@ -306,8 +364,12 @@ impl DirectedGraph {
         to: impl AsRef<str>,
     ) -> GraphInteractionResult<Vec<&str>> {
         // Helper function for constructing the path
-        fn construct_path(parents: &[(u32, u32)], start_id: u32, goal_id: u32) -> Vec<u32> {
-            let mut path = Vec::new();
+        fn construct_path(
+            parents: &[(u32, u32)],
+            start_id: u32,
+            goal_id: u32,
+            path: &mut Vec<u32>,
+        ) {
             let mut current_id = goal_id;
             path.push(current_id);
             while current_id != start_id {
@@ -320,7 +382,6 @@ impl DirectedGraph {
             }
 
             path.reverse(); // Reverse to get the path from start to goal
-            path
         }
 
         let from = self.get_internal(from)?;
@@ -330,23 +391,24 @@ impl DirectedGraph {
             return Ok(vec![self.resolve(from)]);
         }
 
-        let mut queue = VecDeque::new();
-        let mut visited = HashSet::with_hasher(FxBuildHasher::default());
-        let mut parents = Vec::new(); // To track the path back to the start node
+        let queue = unsafe { self.u32x1_queue_0() };
+        let visited = unsafe { self.u32x1_set_0() };
+        let path_buf = unsafe { self.u32x1_vec_0() };
+        let parents = unsafe { self.u32x2_vec_0() }; // To track the path back to the start node
 
         // Initialize
         queue.push_back(from);
         visited.insert(from);
 
-        while let Some(current) = queue.pop_front() {
+        'outer: while let Some(current) = queue.pop_front() {
             if let Some(children) = self.children_map.get(&current) {
                 for &child in children {
                     if visited.insert(child) {
                         parents.push((child, current));
-
                         if child == to {
-                            // If goal found, construct the path from parents
-                            return Ok(self.resolve_mul(construct_path(&parents, from, to)));
+                            // Construct the path and place it in `path_buf`
+                            construct_path(parents, from, to, path_buf);
+                            break 'outer;
                         }
                         queue.push_back(child);
                     }
@@ -354,42 +416,47 @@ impl DirectedGraph {
             }
         }
 
-        Ok(Vec::new())
+        Ok(self.resolve_mul(path_buf.drain(..)))
     }
 
     pub fn least_common_parents(
         &self,
         selected: impl IntoIterator<Item = impl AsRef<str>>,
     ) -> GraphInteractionResult<Vec<&str>> {
-        let selected: Vec<u32> = self.get_internal_mul(selected)?;
-        let mut parents = Vec::new();
-        let mut least_common_parents = selected
-            .iter()
-            .filter(|&&child| {
-                self.parents_u32(&[child], &mut parents);
-                parents
-                    .drain(..)
-                    .any(|parent| selected.contains(&parent))
-                    .not()
-            })
-            .copied()
-            .collect::<Vec<_>>();
+        // Declare used buffers
+        let selected_buf = unsafe { self.u32x1_vec_0() };
+        let parents = unsafe { self.u32x1_vec_1() };
+        let least_common_parents = unsafe { self.u32x1_vec_2() };
+
+        self.get_internal_mul(selected, selected_buf)?;
+
+        selected_buf.iter().for_each(|&child| {
+            self.parents_u32(&[child], parents);
+            let parent_not_in_selection = parents
+                .drain(..)
+                .any(|parent| selected_buf.contains(&parent))
+                .not();
+            if parent_not_in_selection {
+                least_common_parents.push(child);
+            }
+        });
 
         least_common_parents.sort_unstable();
         least_common_parents.dedup();
 
-        Ok(self.resolve_mul(least_common_parents))
+        Ok(self.resolve_mul(least_common_parents.iter().copied()))
     }
 
     pub fn get_all_leaves(&self) -> Vec<&str> {
         self.resolve_mul(self.leaves.iter().copied())
     }
 
-    fn get_leaves_under_u32(&self, nodes: &[u32]) -> Vec<u32> {
-        let mut leaves = Vec::new();
-        let mut visited = HashSet::with_hasher(FxBuildHasher::default());
-        let mut to_visit = nodes.to_vec();
-
+    fn get_leaves_under_u32(
+        &self,
+        to_visit: &mut Vec<u32>,
+        leaves: &mut Vec<u32>,
+        visited: &mut HashSet<u32, FxBuildHasher>,
+    ) {
         while let Some(node) = to_visit.pop() {
             // If it was already present we continue
             if !visited.insert(node) {
@@ -402,8 +469,6 @@ impl DirectedGraph {
                 None => (),
             }
         }
-
-        leaves
     }
 
     /// This is a very expensive operation.
@@ -411,19 +476,24 @@ impl DirectedGraph {
         &self,
         nodes: impl IntoIterator<Item = impl AsRef<str>>,
     ) -> GraphInteractionResult<Vec<&str>> {
-        let nodes = self.get_internal_mul(nodes)?;
-        Ok(self.resolve_mul(self.get_leaves_under_u32(&nodes)))
+        let nodes_buf = unsafe { self.u32x1_vec_0() };
+        let leaves = unsafe { self.u32x1_vec_1() };
+        let visited = unsafe { self.u32x1_set_0() };
+        self.get_internal_mul(nodes, nodes_buf)?;
+        self.get_leaves_under_u32(nodes_buf, leaves, visited);
+        Ok(self.resolve_mul(leaves.drain(..)))
     }
 
     pub fn get_all_roots(&self) -> Vec<&str> {
         self.resolve_mul(self.roots.iter().copied())
     }
 
-    fn get_roots_over_u32(&self, nodes: &[u32]) -> Vec<u32> {
-        let mut roots = Vec::new();
-        let mut visited = HashSet::with_hasher(FxBuildHasher::default());
-        let mut to_visit = nodes.to_vec();
-
+    fn get_roots_over_u32(
+        &self,
+        to_visit: &mut Vec<u32>,
+        roots: &mut Vec<u32>,
+        visited: &mut HashSet<u32, FxBuildHasher>,
+    ) {
         while let Some(node) = to_visit.pop() {
             // If it was already present we continue
             if !visited.insert(node) {
@@ -436,16 +506,18 @@ impl DirectedGraph {
                 None => (),
             }
         }
-
-        roots
     }
 
     pub fn get_roots_over(
         &self,
         nodes: impl IntoIterator<Item = impl AsRef<str>>,
     ) -> GraphInteractionResult<Vec<&str>> {
-        let nodes = self.get_internal_mul(nodes)?;
-        Ok(self.resolve_mul(self.get_roots_over_u32(&nodes)))
+        let nodes_buf = unsafe { self.u32x1_vec_0() };
+        let roots = unsafe { self.u32x1_vec_1() };
+        let visited = unsafe { self.u32x1_set_0() };
+        self.get_internal_mul(nodes, nodes_buf)?;
+        self.get_roots_over_u32(nodes_buf, roots, visited);
+        Ok(self.resolve_mul(roots.drain(..)))
     }
 
     fn subset_u32(&self, node: u32) -> DirectedGraph {
@@ -460,6 +532,7 @@ impl DirectedGraph {
             parent_map: HashMap::default(),
             nodes: Vec::new(),
             n_edges: 0,
+            buf: Default::default(),
         };
 
         let mut visited = HashSet::new();

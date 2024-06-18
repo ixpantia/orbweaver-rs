@@ -68,7 +68,7 @@ impl DirectedAcyclicGraph {
             return Ok(vec![]); // No path from start to goal in a DAG if start comes after goal in topo order
         }
 
-        let mut path = Vec::new();
+        let path = unsafe { self.dg.u32x1_vec_0() };
         let mut current = to;
         path.push(current);
 
@@ -79,7 +79,7 @@ impl DirectedAcyclicGraph {
                 current = node_id;
                 if current == from {
                     path.reverse();
-                    return Ok(self.resolve_mul(path));
+                    return Ok(self.resolve_mul(path.drain(..)));
                 }
             }
         }
@@ -93,12 +93,13 @@ impl DirectedAcyclicGraph {
         to: impl AsRef<str>,
     ) -> GraphInteractionResult<Vec<Vec<&str>>> {
         // Helper function to perform DFS
+        #[inline]
         fn dfs(
             graph: &DirectedAcyclicGraph,
             current: u32,
             goal_id: u32,
             current_path: &mut Vec<u32>,
-            all_paths: &mut Vec<Vec<u32>>,
+            all_paths: &mut Vec<u32>,
             children_buffer: &mut Vec<u32>,
         ) {
             // Add current node to path
@@ -106,7 +107,8 @@ impl DirectedAcyclicGraph {
 
             // Check if the current node is the goal
             if current == goal_id {
-                all_paths.push(current_path.clone());
+                all_paths.extend_from_slice(current_path);
+                all_paths.push(0);
             } else {
                 let children_start_index_local = children_buffer.len();
                 // Continue to next nodes that can be visited from the current node
@@ -135,23 +137,17 @@ impl DirectedAcyclicGraph {
         let from = self.get_internal(from)?;
         let to = self.get_internal(to)?;
 
-        let mut all_paths = Vec::new();
-        let mut current_path = Vec::new();
-        let mut children = Vec::new();
+        let current_path = unsafe { self.dg.u32x1_vec_0() };
+        let children = unsafe { self.dg.u32x1_vec_1() };
+        let all_paths = unsafe { self.dg.u32x1_vec_2() };
 
         // Start DFS from the start node
-        dfs(
-            self,
-            from,
-            to,
-            &mut current_path,
-            &mut all_paths,
-            &mut children,
-        );
+        dfs(self, from, to, current_path, all_paths, children);
 
         Ok(all_paths
-            .into_iter()
-            .map(|path| self.resolve_mul(path))
+            .split(|&n| n == 0)
+            .filter(|path| !path.is_empty())
+            .map(|path| self.resolve_mul(path.iter().copied()))
             .collect())
     }
 
