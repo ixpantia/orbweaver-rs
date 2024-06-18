@@ -31,6 +31,7 @@ pub(crate) struct InternalBufs {
     pub(crate) u32x2_vec_0: UnsafeCell<Vec<(u32, u32)>>,
     pub(crate) u32x1_queue_0: UnsafeCell<VecDeque<u32>>,
     pub(crate) u32x1_set_0: UnsafeCell<HashSet<u32, FxBuildHasher>>,
+    pub(crate) usizex2_queue_0: UnsafeCell<VecDeque<(usize, usize)>>,
 }
 
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
@@ -245,6 +246,7 @@ impl DirectedGraph {
     impl_buf!(u32x2_vec_0, Vec<(u32, u32)>);
     impl_buf!(u32x1_queue_0, VecDeque<u32>);
     impl_buf!(u32x1_set_0, HashSet<u32, FxBuildHasher>);
+    impl_buf!(usizex2_queue_0, VecDeque<(usize, usize)>);
 
     #[inline(always)]
     pub(crate) fn resolve(&self, val: u32) -> &str {
@@ -283,6 +285,7 @@ impl DirectedGraph {
             .unwrap_or(false)
     }
 
+    #[inline]
     pub(crate) fn children_u32(&self, ids: &[u32], out: &mut Vec<u32>) {
         // Gets the children for the given parent
         get_values_on_rel_map(ids, &self.children_map, out)
@@ -306,6 +309,7 @@ impl DirectedGraph {
         Ok(self.resolve_mul(res.drain(..)))
     }
 
+    #[inline]
     pub(crate) fn parents_u32(&self, ids: &[u32], out: &mut Vec<u32>) {
         // Gets the parents for the given children
         get_values_on_rel_map(ids, &self.parent_map, out)
@@ -417,6 +421,52 @@ impl DirectedGraph {
         }
 
         Ok(self.resolve_mul(path_buf.drain(..)))
+    }
+
+    /// Finds all paths on a DG using BFS
+    pub fn find_all_paths(
+        &self,
+        from: impl AsRef<str>,
+        to: impl AsRef<str>,
+    ) -> GraphInteractionResult<Vec<Vec<&str>>> {
+        const PATH_DELIM: u32 = 0;
+
+        let from = self.get_internal(from)?;
+        let to = self.get_internal(to)?;
+
+        let path_buf = unsafe { self.u32x1_vec_0() };
+        let children = unsafe { self.u32x1_vec_1() };
+        let all_paths = unsafe { self.u32x1_vec_2() };
+        let queue = unsafe { self.usizex2_queue_0() };
+
+        path_buf.push(from);
+        queue.push_back((0, 0));
+
+        while let Some((starti, endi)) = queue.pop_front() {
+            let last = path_buf[endi];
+
+            if last == to {
+                all_paths.extend_from_slice(&path_buf[starti..=endi]);
+                all_paths.push(PATH_DELIM);
+            } else {
+                self.children_u32(&[last], children);
+                for child in children.drain(..) {
+                    if !path_buf[starti..=endi].contains(&child) {
+                        let start = path_buf.len();
+                        path_buf.extend_from_within(starti..=endi);
+                        path_buf.push(child);
+                        let end = path_buf.len() - 1;
+                        queue.push_back((start, end));
+                    }
+                }
+            }
+        }
+
+        Ok(all_paths
+            .split(|&n| n == PATH_DELIM)
+            .filter(|p| !p.is_empty())
+            .map(|path| self.resolve_mul(path.iter().copied()))
+            .collect())
     }
 
     pub fn least_common_parents(
@@ -860,5 +910,27 @@ mod tests {
             actual,
             "# of nodes: 12\n# of edges: 12\n# of roots: 1\n# of leaves: 1\n\n|   Parent   |    Child   |\n| ---------- | ---------- |\n| 0000000010 | 0000000011 |\n| 0000000007 | 0000000008 |\n| 0000000004 | 0000000005 |\n| 0000000001 | 0000000002 |\n| 0000000011 | 0000000012 |\n| 0000000008 | 0000000009 |\n| 0000000005 | 0000000006 |\n| 0000000002 | 0000000003 |\n| 0000000012 | 0000000013 |\n| 0000000009 | 0000000010 |\nOmitted 2 nodes\n"
         )
+    }
+
+    #[test]
+    fn test_find_all_paths_many_paths() {
+        let mut builder = DirectedGraphBuilder::new();
+        builder.add_path(["0", "111", "222", "333", "444", "4"]);
+        builder.add_path(["0", "999", "4"]);
+        builder.add_path(["0", "1", "2", "3", "4"]);
+        builder.add_path(["0", "4"]);
+        let graph = builder.build_acyclic().unwrap();
+
+        let paths = graph.find_all_paths("0", "4").unwrap();
+
+        assert_eq!(
+            paths,
+            vec![
+                vec!["0", "4"],
+                vec!["0", "999", "4"],
+                vec!["0", "111", "222", "333", "444", "4"],
+                vec!["0", "1", "2", "3", "4"],
+            ]
+        );
     }
 }

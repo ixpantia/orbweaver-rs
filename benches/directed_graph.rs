@@ -98,6 +98,15 @@ pub fn criterion_benchmark(c: &mut Criterion) {
         })
     });
 
+    c.bench_function("dg_find_all_paths", |b| {
+        b.iter(|| {
+            graph_dg.find_all_paths(
+                black_box("1781f676dedf5767f3243db0a9738b35"),
+                black_box("eb85851afd251bd7c7eaf725d0d19360"),
+            )
+        })
+    });
+
     c.bench_function("dg_least_common_parents", |b| {
         b.iter(|| graph_dg.least_common_parents(black_box(&graph_all_nodes)))
     });
