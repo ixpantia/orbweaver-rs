@@ -1,4 +1,4 @@
-use crate::prelude::*;
+use crate::{directed::LazySet, prelude::*};
 
 pub fn topological_sort(dg: &DirectedGraph) -> Result<Vec<u32>, GraphHasCycle> {
     let mut dg = dg.clone();
@@ -12,10 +12,10 @@ pub fn topological_sort(dg: &DirectedGraph) -> Result<Vec<u32>, GraphHasCycle> {
         dg.parents_u32(&[node], &mut parents);
         for parent in parents.drain(..) {
             // We need to manually remove this edge
-            if let Some(children) = dg.children_map.get_mut(&parent) {
+            if let LazySet::Initialized(children) = dg.children_map.get_mut(parent) {
                 children.remove(&node);
             }
-            if let Some(node_parents) = dg.parent_map.get_mut(&node) {
+            if let LazySet::Initialized(node_parents) = dg.parent_map.get_mut(node) {
                 if node_parents.remove(&parent) {
                     dg.n_edges -= 1;
                 }
@@ -24,11 +24,11 @@ pub fn topological_sort(dg: &DirectedGraph) -> Result<Vec<u32>, GraphHasCycle> {
             // Check if the parent still has children.
             // If it does not we add it to the `no_deps`
             // vector.
-            match dg.children_map.get(&parent) {
+            match dg.children_map.get(parent) {
                 // If it matches and it has items them we do nothing
                 // under any other circumstance we add it to
                 // no deps
-                Some(children) if !children.is_empty() => {}
+                LazySet::Initialized(children) if !children.is_empty() => {}
                 _ => no_deps.push(parent),
             }
         }

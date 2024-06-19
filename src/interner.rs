@@ -15,6 +15,7 @@ impl InternerBuilder {
             map_strs: HashMap::new(),
         }
     }
+
     pub(crate) fn get_or_intern(&mut self, val: impl AsRef<str>) -> NonZeroU32 {
         match self.map_strs.get(val.as_ref()) {
             Some(sym) => *sym,
@@ -28,6 +29,7 @@ impl InternerBuilder {
             }
         }
     }
+
     pub(crate) fn build(self) -> Resolver {
         let mut indices = Vec::new();
         let mut arena = Vec::new();
@@ -84,6 +86,10 @@ impl Resolver {
         syms.iter()
             .map(|sym| *self.strs.get_unchecked(*sym as usize))
             .collect()
+    }
+    #[inline]
+    pub(crate) fn len(&self) -> usize {
+        self.strs.len()
     }
 }
 
