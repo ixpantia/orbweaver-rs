@@ -68,5 +68,9 @@ mod tests {
         assert_eq!(dg.nodes(), de_dg.nodes());
         assert_eq!(dg.get_all_leaves(), de_dg.get_all_leaves());
         assert_eq!(dg.get_all_roots(), de_dg.get_all_roots());
+        assert_eq!(
+            dg.find_path("1", "50").unwrap(),
+            de_dg.find_path("1", "50").unwrap()
+        );
     }
 }

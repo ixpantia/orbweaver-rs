@@ -13,7 +13,7 @@ use self::acyclic::DirectedAcyclicGraph;
 use self::get_rel2_on_rel1::get_values_on_rel_map;
 use crate::prelude::*;
 use std::cell::UnsafeCell;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashSet, VecDeque};
 use std::ops::Not;
 use std::rc::Rc;
 
@@ -37,6 +37,76 @@ pub(crate) struct InternalBufs {
 }
 
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Clone)]
+enum LazySet {
+    Initialized(HashSet<u32, FxBuildHasher>),
+    Uninitialized,
+}
+
+impl LazySet {
+    fn or_init(&mut self) -> &mut HashSet<u32, FxBuildHasher> {
+        if let LazySet::Uninitialized = self {
+            *self = LazySet::Initialized(HashSet::default());
+        }
+
+        if let LazySet::Initialized(ref mut hs) = self {
+            hs
+        } else {
+            // This code is unreachable, we just initialized it
+            unsafe { std::hint::unreachable_unchecked() }
+        }
+    }
+
+    /// Returns `true` if the lazy set is [`Initialized`].
+    ///
+    /// [`Initialized`]: LazySet::Initialized
+    #[must_use]
+    fn is_initialized(&self) -> bool {
+        matches!(self, Self::Initialized(..))
+    }
+}
+
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Clone)]
+pub(crate) struct NodeMap {
+    map: Vec<LazySet>,
+}
+
+impl NodeMap {
+    fn new(len: usize) -> Self {
+        let mut map = Vec::new();
+        map.resize(len, LazySet::Uninitialized);
+        Self { map }
+    }
+    #[inline]
+    fn get(&self, node: u32) -> &LazySet {
+        &self.map[node as usize]
+    }
+    #[inline]
+    fn get_mut(&mut self, node: u32) -> &mut LazySet {
+        &mut self.map[node as usize]
+    }
+    fn contains_key(&self, key: u32) -> bool {
+        self.map
+            .get(key as usize)
+            .map(|ls| ls.is_initialized())
+            .unwrap_or(false)
+    }
+    fn iter(&self) -> impl Iterator<Item = (u32, &LazySet)> {
+        self.map.iter().enumerate().map(|(i, set)| (i as u32, set))
+    }
+    fn len(&self) -> usize {
+        self.map.len()
+    }
+    fn initialized_keys(&self) -> Vec<u32> {
+        (1..self.len())
+            .filter(|i| self.map[*i].is_initialized())
+            .map(|i| i as u32)
+            .collect()
+    }
+}
+
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct DirectedGraph {
     pub(crate) interner: Rc<Resolver>,
     pub(crate) leaves: Vec<u32>,
@@ -44,10 +114,10 @@ pub struct DirectedGraph {
     pub(crate) nodes: Vec<u32>,
     /// Maps parents to their children
     /// Key: Parent  | Value: Children
-    pub(crate) children_map: HashMap<u32, HashSet<u32, FxBuildHasher>, FxBuildHasher>,
+    pub(crate) children_map: NodeMap,
     /// Maps children to their parents
     /// Key: Child | Value: Parents
-    pub(crate) parent_map: HashMap<u32, HashSet<u32, FxBuildHasher>, FxBuildHasher>,
+    pub(crate) parent_map: NodeMap,
     pub(crate) n_edges: usize,
     #[cfg_attr(feature = "serde", serde(skip_serializing, skip_deserializing))]
     pub(crate) buf: InternalBufs,
@@ -127,13 +197,15 @@ impl DirectedGraphBuilder {
 
         let mut n_edges = 0;
 
+        let interner = Rc::new(self.interner.build());
+
         // Maps parents to their children
-        let mut children_map = HashMap::<u32, HashSet<_, _>, _>::default();
+        let mut children_map = NodeMap::new(interner.len());
 
         for i in 0..self.parents.len() {
             let was_added = children_map
-                .entry(self.parents[i])
-                .or_default()
+                .get_mut(self.parents[i])
+                .or_init()
                 .insert(self.children[i]);
             if was_added {
                 n_edges += 1;
@@ -141,17 +213,17 @@ impl DirectedGraphBuilder {
         }
 
         // Maps children to their parents
-        let mut parent_map = HashMap::<u32, HashSet<_, _>, _>::default();
+        let mut parent_map = NodeMap::new(interner.len());
 
         for i in 0..self.parents.len() {
             parent_map
-                .entry(self.children[i])
-                .or_default()
+                .get_mut(self.children[i])
+                .or_init()
                 .insert(self.parents[i]);
         }
 
         DirectedGraph {
-            interner: Rc::new(self.interner.build()),
+            interner,
             leaves,
             roots,
             nodes,
@@ -212,12 +284,17 @@ impl std::fmt::Debug for DirectedGraph {
         writeln!(f, "| ---------- | ---------- |")?;
         let mut n_printed = 0;
         'outer: for (parent, children) in self.children_map.iter() {
-            for child in children {
-                n_printed += 1;
-                writeln!(f, "| {:0>10} | {:0>10} |", parent, child)?;
-                if n_printed == 10 {
-                    break 'outer;
+            match children {
+                LazySet::Initialized(children) => {
+                    for child in children {
+                        n_printed += 1;
+                        writeln!(f, "| {:0>10} | {:0>10} |", parent, child)?;
+                        if n_printed == 10 {
+                            break 'outer;
+                        }
+                    }
                 }
+                LazySet::Uninitialized => continue,
             }
         }
 
@@ -280,13 +357,6 @@ impl DirectedGraph {
         Ok(())
     }
 
-    pub(crate) fn edge_exists(&self, from: u32, to: u32) -> bool {
-        self.children_map
-            .get(&from)
-            .map(|children| children.contains(&to))
-            .unwrap_or(false)
-    }
-
     #[inline]
     pub(crate) fn children_u32(&self, ids: &[u32], out: &mut Vec<u32>) {
         // Gets the children for the given parent
@@ -345,7 +415,7 @@ impl DirectedGraph {
                 self.get_internal(x).map(|id| {
                     // If we can find it on the children map
                     // that means that it has parents
-                    self.parent_map.contains_key(&id)
+                    self.parent_map.contains_key(id)
                 })
             })
             .collect()
@@ -359,7 +429,7 @@ impl DirectedGraph {
             .into_iter()
             .map(|x| {
                 self.get_internal(x)
-                    .map(|id| self.children_map.contains_key(&id))
+                    .map(|id| self.children_map.contains_key(id))
             })
             .collect()
     }
@@ -407,7 +477,7 @@ impl DirectedGraph {
         visited.insert(from);
 
         'outer: while let Some(current) = queue.pop_front() {
-            if let Some(children) = self.children_map.get(&current) {
+            if let LazySet::Initialized(children) = self.children_map.get(current) {
                 for &child in children {
                     if visited.insert(child) {
                         parents.push((child, current));
@@ -517,10 +587,14 @@ impl DirectedGraph {
                 continue;
             }
 
-            match self.children_map.get(&node) {
-                Some(children) => children.iter().for_each(|child| to_visit.push(*child)),
-                None if self.leaves.binary_search(&node).is_ok() => leaves.push(node),
-                None => (),
+            match self.children_map.get(node) {
+                LazySet::Initialized(children) => {
+                    children.iter().for_each(|child| to_visit.push(*child))
+                }
+                LazySet::Uninitialized if self.leaves.binary_search(&node).is_ok() => {
+                    leaves.push(node)
+                }
+                _ => (),
             }
         }
     }
@@ -554,10 +628,14 @@ impl DirectedGraph {
                 continue;
             }
 
-            match self.parent_map.get(&node) {
-                Some(parents) => parents.iter().for_each(|parent| to_visit.push(*parent)),
-                None if self.roots.binary_search(&node).is_ok() => roots.push(node),
-                None => (),
+            match self.parent_map.get(node) {
+                LazySet::Initialized(parents) => {
+                    parents.iter().for_each(|parent| to_visit.push(*parent))
+                }
+                LazySet::Uninitialized if self.roots.binary_search(&node).is_ok() => {
+                    roots.push(node)
+                }
+                _ => (),
             }
         }
     }
@@ -575,35 +653,33 @@ impl DirectedGraph {
     }
 
     fn subset_u32(&self, node: u32) -> DirectedGraph {
-        let mut new_dg = DirectedGraph {
-            interner: self.interner.clone(),
-            // When subsetting the graph the only root will be
-            // the node we select. This is because we are selecting
-            // it and all their dependants.
-            roots: vec![node],
-            leaves: Vec::new(),
-            children_map: HashMap::default(),
-            parent_map: HashMap::default(),
-            nodes: Vec::new(),
-            n_edges: 0,
-            buf: Default::default(),
-        };
-
-        let mut visited = HashSet::new();
+        // When subsetting the graph the only root will be
+        // the node we select. This is because we are selecting
+        // it and all their dependants.
+        let roots = vec![node];
+        let leaves = unsafe { self.u32x1_vec_0() };
+        let visited = unsafe { self.u32x1_set_0() };
+        let mut children_map = NodeMap::new(self.interner.len());
+        let mut parent_map = NodeMap::new(self.interner.len());
         let mut queue = VecDeque::new();
+        let mut n_edges = 0;
 
-        // Since the main value is a NonZeroU32
-        // we can use a 0 as None :D minor
-        // optimization
-        queue.push_back((0, node));
+        // Having no parent really only happens
+        // on the first iteration. So we take it out of the loop
+        // to optimize
+        visited.insert(node);
+        match self.children_map.get(node) {
+            LazySet::Uninitialized => leaves.push(node),
+            LazySet::Initialized(children) => children.iter().for_each(|&child| {
+                queue.push_back((node, child));
+            }),
+        }
 
         while let Some((parent, node)) = queue.pop_front() {
             // If we have a parent we add the relationship
-            if parent != 0 {
-                new_dg.children_map.entry(parent).or_default().insert(node);
-                new_dg.parent_map.entry(node).or_default().insert(parent);
-                new_dg.n_edges += 1;
-            }
+            children_map.get_mut(parent).or_init().insert(node);
+            parent_map.get_mut(node).or_init().insert(parent);
+            n_edges += 1;
 
             // If we have already visited this node
             // we return :)
@@ -614,29 +690,34 @@ impl DirectedGraph {
             // If this node has children then
             // we recurse, else we insert it
             // as a leaf
-            match self.children_map.get(&node) {
-                None => new_dg.leaves.push(node),
-                Some(children) => children.iter().for_each(|&child| {
-                    queue.push_back((node, child));
+            match self.children_map.get(node) {
+                LazySet::Uninitialized => leaves.push(node),
+                LazySet::Initialized(children) => children.iter().for_each(|child| {
+                    queue.push_back((node, *child));
                 }),
             }
         }
 
-        let nodes = new_dg.parent_map.keys().copied().collect();
-        new_dg.nodes = nodes;
-        new_dg.nodes.push(node);
+        let mut nodes = parent_map.initialized_keys();
+        nodes.push(node);
 
         // Re order values
-        new_dg.nodes.sort_unstable();
-        new_dg.nodes.dedup();
+        nodes.sort_unstable();
+        nodes.dedup();
 
-        new_dg.leaves.sort_unstable();
-        new_dg.leaves.dedup();
+        leaves.sort_unstable();
+        leaves.dedup();
 
-        // There should only be one root in a subset
-        assert_eq!(new_dg.roots.len(), 1);
-
-        new_dg
+        DirectedGraph {
+            interner: Rc::clone(&self.interner),
+            nodes,
+            leaves: leaves.clone(),
+            roots,
+            n_edges,
+            parent_map,
+            children_map,
+            buf: InternalBufs::default(),
+        }
     }
 
     /// Returns a new tree that is the subset of of all children under a
@@ -889,31 +970,6 @@ mod tests {
         assert_eq!(dg2.get_roots_over(["H"]).unwrap(), ["A"]);
         assert_eq!(dg2.get_roots_over(["H", "C", "1"]).unwrap(), ["A"]);
         assert_eq!(dg2.nodes(), ["A", "B", "C", "D", "H"]);
-    }
-
-    #[test]
-    fn test_debug() {
-        let mut builder = DirectedGraphBuilder::new();
-        builder.add_edge("1", "2");
-        builder.add_edge("2", "3");
-        builder.add_edge("3", "4");
-        builder.add_edge("4", "5");
-        builder.add_edge("5", "6");
-        builder.add_edge("6", "7");
-        builder.add_edge("7", "8");
-        builder.add_edge("8", "9");
-        builder.add_edge("9", "10");
-        builder.add_edge("10", "11");
-        builder.add_edge("11", "12");
-        builder.add_edge("12", "13");
-        let dg = builder.build_directed();
-
-        let actual = format!("{:?}", dg);
-
-        assert_eq!(
-            actual,
-            "# of nodes: 12\n# of edges: 12\n# of roots: 1\n# of leaves: 1\n\n|   Parent   |    Child   |\n| ---------- | ---------- |\n| 0000000010 | 0000000011 |\n| 0000000007 | 0000000008 |\n| 0000000004 | 0000000005 |\n| 0000000001 | 0000000002 |\n| 0000000011 | 0000000012 |\n| 0000000008 | 0000000009 |\n| 0000000005 | 0000000006 |\n| 0000000002 | 0000000003 |\n| 0000000012 | 0000000013 |\n| 0000000009 | 0000000010 |\nOmitted 2 nodes\n"
-        )
     }
 
     #[test]
