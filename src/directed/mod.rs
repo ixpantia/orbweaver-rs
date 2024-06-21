@@ -1,31 +1,22 @@
 pub mod acyclic;
+pub mod builder;
 mod debug;
 mod get_rel2_on_rel1;
 
-use crate::utils::internal_bufs::InternalBufs;
-use crate::utils::interner::{InternerBuilder, Resolver};
-use crate::utils::node_map::{LazySet, NodeMap};
-use crate::utils::sym::Sym;
-use fxhash::FxHashSet;
-use rayon::prelude::*;
-#[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
-
-use self::acyclic::DirectedAcyclicGraph;
 use self::get_rel2_on_rel1::get_values_on_rel_map;
-use crate::prelude::*;
-use std::collections::VecDeque;
-use std::ops::Not;
-use std::rc::Rc;
+use crate::{
+    prelude::*,
+    utils::{
+        internal_bufs::InternalBufs,
+        interner::Resolver,
+        node_map::{LazySet, NodeMap},
+        sym::Sym,
+    },
+};
+use fxhash::FxHashSet;
+use std::{collections::VecDeque, ops::Not, rc::Rc};
 
-#[derive(Clone)]
-pub struct DirectedGraphBuilder {
-    pub(crate) parents: Vec<Sym>,
-    pub(crate) children: Vec<Sym>,
-    pub(crate) interner: InternerBuilder,
-}
-
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct DirectedGraph {
     pub(crate) interner: Rc<Resolver>,
     pub(crate) leaves: Vec<Sym>,
@@ -40,128 +31,6 @@ pub struct DirectedGraph {
     pub(crate) n_edges: usize,
     #[cfg_attr(feature = "serde", serde(skip_serializing, skip_deserializing))]
     pub(crate) buf: InternalBufs,
-}
-
-fn find_leaves(parents: &[Sym], children: &[Sym]) -> Vec<Sym> {
-    let mut leaves: Vec<_> = children
-        .par_iter()
-        .filter(|child| parents.binary_search(child).is_err())
-        .copied()
-        .collect();
-    leaves.sort_unstable();
-    leaves.dedup();
-    leaves
-}
-
-fn find_roots(parents: &[Sym], children: &[Sym]) -> Vec<Sym> {
-    let mut roots: Vec<_> = parents
-        .par_iter()
-        .filter(|parent| children.binary_search(parent).is_err())
-        .copied()
-        .collect();
-    roots.sort_unstable();
-    roots.dedup();
-    roots
-}
-
-impl DirectedGraphBuilder {
-    pub fn new() -> Self {
-        DirectedGraphBuilder {
-            interner: InternerBuilder::new(),
-            children: Vec::new(),
-            parents: Vec::new(),
-        }
-    }
-
-    #[inline(always)]
-    pub(crate) fn get_or_intern(&mut self, val: impl AsRef<str>) -> Sym {
-        self.interner.get_or_intern(val)
-    }
-    pub fn add_edge(&mut self, from: impl AsRef<str>, to: impl AsRef<str>) -> &mut Self {
-        let from = self.get_or_intern(&from);
-        let to = self.get_or_intern(&to);
-        self.parents.push(from);
-        self.children.push(to);
-        self
-    }
-    pub fn add_path(&mut self, path: impl IntoIterator<Item = impl AsRef<str>>) -> &mut Self {
-        let mut path = path.into_iter().peekable();
-        while let (Some(from), Some(to)) = (path.next(), path.peek()) {
-            self.add_edge(from.as_ref(), to.as_ref());
-        }
-        self
-    }
-
-    pub fn build_directed(self) -> DirectedGraph {
-        // When we build we will do some optimizations
-        let mut unique_parents = self.parents.clone();
-        unique_parents.sort_unstable();
-        unique_parents.dedup();
-        unique_parents.shrink_to_fit();
-
-        let mut unique_children = self.children.clone();
-        unique_children.sort_unstable();
-        unique_children.dedup();
-        unique_parents.shrink_to_fit();
-
-        let mut nodes = Vec::new();
-        nodes.extend_from_slice(&unique_parents);
-        nodes.extend_from_slice(&unique_children);
-        nodes.sort_unstable();
-        nodes.dedup();
-        nodes.shrink_to_fit();
-
-        let leaves = find_leaves(&unique_parents, &unique_children);
-        let roots = find_roots(&unique_parents, &unique_children);
-
-        let mut n_edges = 0;
-
-        let interner = Rc::new(self.interner.build());
-
-        // Maps parents to their children
-        let mut children_map = NodeMap::new(interner.len());
-
-        for i in 0..self.parents.len() {
-            let was_added = children_map
-                .get_mut(self.parents[i])
-                .or_init()
-                .insert(self.children[i]);
-            if was_added {
-                n_edges += 1;
-            }
-        }
-
-        // Maps children to their parents
-        let mut parent_map = NodeMap::new(interner.len());
-
-        for i in 0..self.parents.len() {
-            parent_map
-                .get_mut(self.children[i])
-                .or_init()
-                .insert(self.parents[i]);
-        }
-
-        DirectedGraph {
-            interner,
-            leaves,
-            roots,
-            nodes,
-            children_map,
-            parent_map,
-            n_edges,
-            buf: Default::default(),
-        }
-    }
-
-    pub fn build_acyclic(self) -> Result<DirectedAcyclicGraph, GraphHasCycle> {
-        DirectedAcyclicGraph::build(self.build_directed())
-    }
-}
-
-impl Default for DirectedGraphBuilder {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 impl Clone for DirectedGraph {
