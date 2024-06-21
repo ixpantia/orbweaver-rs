@@ -1,4 +1,4 @@
-use crate::{directed::DirectedGraph, prelude::*};
+use crate::{directed::DirectedGraph, prelude::*, utils::sym::Sym};
 use std::ops::Deref;
 mod topological_sort;
 #[cfg(feature = "serde")]
@@ -42,17 +42,15 @@ impl DirectedAcyclicGraph {
         from: impl AsRef<str>,
         to: impl AsRef<str>,
     ) -> GraphInteractionResult<Vec<Vec<&str>>> {
-        const PATH_DELIM: u32 = 0;
-
         // Helper function to perform DFS
         #[inline]
         fn dfs(
             graph: &DirectedAcyclicGraph,
-            current: u32,
-            goal_id: u32,
-            current_path: &mut Vec<u32>,
-            all_paths: &mut Vec<u32>,
-            children_buffer: &mut Vec<u32>,
+            current: Sym,
+            goal_id: Sym,
+            current_path: &mut Vec<Sym>,
+            all_paths: &mut Vec<Sym>,
+            children_buffer: &mut Vec<Sym>,
         ) {
             // Add current node to path
             current_path.push(current);
@@ -60,7 +58,7 @@ impl DirectedAcyclicGraph {
             // Check if the current node is the goal
             if current == goal_id {
                 all_paths.extend_from_slice(current_path);
-                all_paths.push(PATH_DELIM);
+                all_paths.push(Sym::RESERVED);
             } else {
                 let children_start_index_local = children_buffer.len();
                 graph.children_u32(&[current], children_buffer);
@@ -94,7 +92,7 @@ impl DirectedAcyclicGraph {
         dfs(self, from, to, current_path, all_paths, children);
 
         Ok(all_paths
-            .split(|&n| n == PATH_DELIM)
+            .split(|&n| n.is_reserved())
             .filter(|p| !p.is_empty())
             .map(|path| self.resolve_mul_slice(path))
             .collect())
@@ -181,10 +179,10 @@ mod tests {
         assert_eq!(
             paths,
             vec![
-                vec!["0", "4"],
                 vec!["0", "999", "4"],
                 vec!["0", "111", "222", "333", "444", "4"],
                 vec!["0", "1", "2", "3", "4"],
+                vec!["0", "4"],
             ]
         );
     }
