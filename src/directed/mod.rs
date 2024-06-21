@@ -10,6 +10,7 @@ use crate::{
         internal_bufs::InternalBufs,
         interner::Resolver,
         node_map::{LazySet, NodeMap},
+        node_set::NodeVec,
         sym::Sym,
     },
 };
@@ -83,7 +84,7 @@ impl DirectedGraph {
     }
 
     #[inline(always)]
-    pub(crate) fn resolve_mul_slice(&self, nodes: &[Sym]) -> Vec<&str> {
+    pub(crate) fn resolve_mul_slice(&self, nodes: &[Sym]) -> NodeVec {
         unsafe { self.interner.resolve_many_unchecked_from_slice(nodes) }
     }
 
@@ -122,7 +123,7 @@ impl DirectedGraph {
     pub fn children(
         &self,
         nodes: impl IntoIterator<Item = impl AsRef<str>>,
-    ) -> GraphInteractionResult<Vec<&str>> {
+    ) -> GraphInteractionResult<NodeVec> {
         let nodes_buf = unsafe { self.u32x1_vec_0() };
         let res = unsafe { self.u32x1_vec_1() };
         self.get_internal_mul(nodes, nodes_buf)?;
@@ -146,7 +147,7 @@ impl DirectedGraph {
     pub fn parents(
         &self,
         nodes: impl IntoIterator<Item = impl AsRef<str>>,
-    ) -> GraphInteractionResult<Vec<&str>> {
+    ) -> GraphInteractionResult<NodeVec> {
         let nodes_buf = unsafe { self.u32x1_vec_0() };
         let res = unsafe { self.u32x1_vec_1() };
         self.get_internal_mul(nodes, nodes_buf)?;
@@ -187,7 +188,7 @@ impl DirectedGraph {
         &self,
         from: impl AsRef<str>,
         to: impl AsRef<str>,
-    ) -> GraphInteractionResult<Vec<&str>> {
+    ) -> GraphInteractionResult<NodeVec> {
         // Helper function for constructing the path
         fn construct_path(
             parents: &[(Sym, Sym)],
@@ -213,7 +214,7 @@ impl DirectedGraph {
         let to = self.get_internal(to)?;
 
         if from == to {
-            return Ok(vec![self.resolve(from)]);
+            return Ok(self.resolve_mul_slice(&[from]));
         }
 
         let queue = unsafe { self.u32x1_queue_0() };
@@ -249,7 +250,7 @@ impl DirectedGraph {
         &self,
         from: impl AsRef<str>,
         to: impl AsRef<str>,
-    ) -> GraphInteractionResult<Vec<Vec<&str>>> {
+    ) -> GraphInteractionResult<Vec<NodeVec>> {
         let from = self.get_internal(from)?;
         let to = self.get_internal(to)?;
 
@@ -291,7 +292,7 @@ impl DirectedGraph {
     pub fn least_common_parents(
         &self,
         selected: impl IntoIterator<Item = impl AsRef<str>>,
-    ) -> GraphInteractionResult<Vec<&str>> {
+    ) -> GraphInteractionResult<NodeVec> {
         // Declare used buffers
         let selected_buf = unsafe { self.u32x1_vec_0() };
         let selected_buf_set = unsafe { self.u32x1_set_0() };
@@ -318,7 +319,7 @@ impl DirectedGraph {
         Ok(self.resolve_mul_slice(least_common_parents))
     }
 
-    pub fn get_all_leaves(&self) -> Vec<&str> {
+    pub fn get_all_leaves(&self) -> NodeVec {
         self.resolve_mul_slice(&self.leaves)
     }
 
@@ -350,7 +351,7 @@ impl DirectedGraph {
     pub fn get_leaves_under(
         &self,
         nodes: impl IntoIterator<Item = impl AsRef<str>>,
-    ) -> GraphInteractionResult<Vec<&str>> {
+    ) -> GraphInteractionResult<NodeVec> {
         let nodes_buf = unsafe { self.u32x1_vec_0() };
         let leaves = unsafe { self.u32x1_vec_1() };
         let visited = unsafe { self.u32x1_set_0() };
@@ -359,7 +360,7 @@ impl DirectedGraph {
         Ok(self.resolve_mul_slice(leaves))
     }
 
-    pub fn get_all_roots(&self) -> Vec<&str> {
+    pub fn get_all_roots(&self) -> NodeVec {
         self.resolve_mul_slice(&self.roots)
     }
 
@@ -390,7 +391,7 @@ impl DirectedGraph {
     pub fn get_roots_over(
         &self,
         nodes: impl IntoIterator<Item = impl AsRef<str>>,
-    ) -> GraphInteractionResult<Vec<&str>> {
+    ) -> GraphInteractionResult<NodeVec> {
         let nodes_buf = unsafe { self.u32x1_vec_0() };
         let roots = unsafe { self.u32x1_vec_1() };
         let visited = unsafe { self.u32x1_set_0() };
@@ -473,7 +474,7 @@ impl DirectedGraph {
         self.get_internal(node).map(|node| self.subset_u32(node))
     }
 
-    pub fn nodes(&self) -> Vec<&str> {
+    pub fn nodes(&self) -> NodeVec {
         self.resolve_mul_slice(&self.nodes)
     }
 
@@ -490,11 +491,6 @@ impl DirectedGraph {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn sort(mut vec: Vec<&str>) -> Vec<&str> {
-        vec.sort_unstable();
-        vec
-    }
 
     #[test]
     fn dg_builder_add_edge() {
@@ -530,13 +526,13 @@ mod tests {
         builder.add_edge("other", "10");
         let dg = builder.build_directed();
         assert_eq!(
-            sort(dg.children(["hello"]).unwrap()),
-            ["0", "1", "2", "3", "4"],
+            dg.children(["hello"]).unwrap(),
+            ["4", "1", "3", "0", "2"],
             "Parent is not equal"
         );
         assert_eq!(
-            sort(dg.children(["hello", "other"]).unwrap()),
-            vec!["0", "1", "10", "2", "3", "4", "5", "6", "7", "8", "9"],
+            dg.children(["hello", "other"]).unwrap(),
+            vec!["4", "1", "3", "0", "2", "6", "8", "5", "10", "7", "9"],
             "Parent is not equal"
         );
     }

@@ -1,8 +1,8 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, rc::Rc};
 
 use fxhash::FxBuildHasher;
 
-use super::sym::Sym;
+use super::{node_set::NodeVec, sym::Sym};
 
 #[derive(Clone)]
 pub(crate) struct InternerBuilder {
@@ -40,7 +40,7 @@ impl InternerBuilder {
             indices.push((i, arena.len(), key_bytes.len()));
             arena.extend_from_slice(key.as_bytes());
         }
-        let arena: Box<[u8]> = Box::from(arena);
+        let arena: Rc<[u8]> = Rc::from(arena);
         let arena_ptr = arena.as_ptr();
         let mut strs = Vec::new();
         let mut strs_map = HashMap::default();
@@ -70,7 +70,7 @@ pub(crate) struct Resolver {
     strs_map: HashMap<&'static str, Sym, FxBuildHasher>,
     strs: Box<[&'static str]>,
     #[allow(unused)]
-    arena: Box<[u8]>,
+    arena: Rc<[u8]>,
 }
 
 impl Resolver {
@@ -83,10 +83,15 @@ impl Resolver {
         self.strs.get_unchecked(sym.into_usize())
     }
     #[inline(always)]
-    pub(crate) unsafe fn resolve_many_unchecked_from_slice(&self, syms: &[Sym]) -> Vec<&str> {
-        syms.iter()
+    pub(crate) unsafe fn resolve_many_unchecked_from_slice(&self, syms: &[Sym]) -> NodeVec {
+        let values = syms
+            .iter()
             .map(|sym| *self.strs.get_unchecked(sym.into_usize()))
-            .collect()
+            .collect();
+        NodeVec {
+            values,
+            arena: Rc::clone(&self.arena),
+        }
     }
     #[inline]
     pub(crate) fn len(&self) -> usize {

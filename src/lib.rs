@@ -12,4 +12,5 @@ pub mod prelude {
     pub use crate::directed::builder::DirectedGraphBuilder;
     pub use crate::directed::DirectedGraph;
     pub use crate::error::*;
+    pub use crate::utils::node_set::{NodeVec, NodeVecIter};
 }

@@ -1,4 +1,8 @@
-use crate::{directed::DirectedGraph, prelude::*, utils::sym::Sym};
+use crate::{
+    directed::DirectedGraph,
+    prelude::*,
+    utils::{node_set::NodeVec, sym::Sym},
+};
 use std::ops::Deref;
 mod topological_sort;
 #[cfg(feature = "serde")]
@@ -41,7 +45,7 @@ impl DirectedAcyclicGraph {
         &self,
         from: impl AsRef<str>,
         to: impl AsRef<str>,
-    ) -> GraphInteractionResult<Vec<Vec<&str>>> {
+    ) -> GraphInteractionResult<Vec<NodeVec>> {
         // Helper function to perform DFS
         #[inline]
         fn dfs(
