@@ -1,3 +1,5 @@
+use crate::CURRENT_VERSION;
+
 #[derive(Debug)]
 pub struct GraphHasCycle;
 
@@ -11,6 +13,45 @@ impl std::fmt::Display for GraphHasCycle {
 }
 
 impl std::error::Error for GraphHasCycle {}
+
+#[derive(Debug)]
+pub enum BinaryError {
+    IO(std::io::Error),
+    #[cfg(feature = "binary")]
+    Cbor(serde_cbor::Error),
+    Version([u32; 2]),
+}
+
+#[cfg(feature = "binary")]
+impl From<serde_cbor::Error> for BinaryError {
+    fn from(v: serde_cbor::Error) -> Self {
+        Self::Cbor(v)
+    }
+}
+
+impl From<std::io::Error> for BinaryError {
+    fn from(v: std::io::Error) -> Self {
+        Self::IO(v)
+    }
+}
+
+impl std::fmt::Display for BinaryError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::IO(err) => write!(f, "IO error while reading the OW binary format: {err}"),
+            #[cfg(feature = "binary")]
+            Self::Cbor(err) => write!(f, "{err}"),
+            Self::Version(version) => write!(
+                f,
+                "Tried to read a OW binary generated with version {}.{}. You are using version {}.{}",
+                version[0], version[1],
+                CURRENT_VERSION[0], CURRENT_VERSION[1]
+            )
+        }
+    }
+}
+
+impl std::error::Error for BinaryError {}
 
 #[derive(Debug)]
 pub enum GraphInteractionError {
