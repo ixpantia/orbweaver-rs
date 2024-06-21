@@ -1,26 +1,42 @@
 #[cfg(feature = "binary")]
 use flate2::{read::ZlibDecoder, write::ZlibEncoder, Compression};
 
+use crate::{error::BinaryError, CURRENT_VERSION};
+
+const fn version_to_bytes() -> [u8; 8] {
+    unsafe { std::mem::transmute(CURRENT_VERSION) }
+}
+
+fn version_from_reader<R: std::io::Read>(reader: &mut R) -> Result<[u32; 2], std::io::Error> {
+    let mut buffer = [0; 8];
+    reader.read_exact(&mut buffer)?;
+    Ok(unsafe { std::mem::transmute(buffer) })
+}
+
 macro_rules! impl_read_write {
     // `()` indicates that the macro takes no argument.
     ($struct:ty) => {
         #[cfg(feature = "binary")]
         impl $struct {
-            pub fn to_binary<W>(&self, writer: W) -> Result<(), serde_cbor::Error>
+            pub fn to_binary<W>(&self, mut writer: W) -> Result<(), BinaryError>
             where
                 W: std::io::Write,
             {
+                writer.write_all(&version_to_bytes())?;
                 let writer = ZlibEncoder::new(writer, Compression::default());
-                serde_cbor::to_writer(writer, self)
+                Ok(serde_cbor::to_writer(writer, self)?)
             }
 
-            pub fn from_binary<R>(reader: R) -> Result<Self, serde_cbor::Error>
+            pub fn from_binary<R>(mut reader: R) -> Result<Self, BinaryError>
             where
                 R: std::io::Read,
             {
+                let version = version_from_reader(&mut reader)?;
+                if version != CURRENT_VERSION {
+                    return Err(BinaryError::Version(version));
+                }
                 let reader = ZlibDecoder::new(reader);
-
-                serde_cbor::from_reader(reader)
+                Ok(serde_cbor::from_reader(reader)?)
             }
         }
     };

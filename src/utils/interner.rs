@@ -1,22 +1,24 @@
-use std::{collections::HashMap, num::NonZeroU32};
+use std::{collections::HashMap, rc::Rc};
 
 use fxhash::FxBuildHasher;
 
+use super::{node_set::NodeVec, sym::Sym};
+
 #[derive(Clone)]
 pub(crate) struct InternerBuilder {
-    count: NonZeroU32,
-    map_strs: HashMap<Box<str>, NonZeroU32>,
+    count: Sym,
+    map_strs: HashMap<Box<str>, Sym>,
 }
 
 impl InternerBuilder {
     pub(crate) fn new() -> Self {
         InternerBuilder {
-            count: unsafe { NonZeroU32::new_unchecked(1) },
+            count: Sym::new(0),
             map_strs: HashMap::new(),
         }
     }
 
-    pub(crate) fn get_or_intern(&mut self, val: impl AsRef<str>) -> NonZeroU32 {
+    pub(crate) fn get_or_intern(&mut self, val: impl AsRef<str>) -> Sym {
         match self.map_strs.get(val.as_ref()) {
             Some(sym) => *sym,
             None => {
@@ -24,7 +26,7 @@ impl InternerBuilder {
                     .map_strs
                     .entry(val.as_ref().into())
                     .or_insert(self.count);
-                self.count = self.count.saturating_add(1);
+                self.count += 1;
                 sym
             }
         }
@@ -38,10 +40,9 @@ impl InternerBuilder {
             indices.push((i, arena.len(), key_bytes.len()));
             arena.extend_from_slice(key.as_bytes());
         }
-        let arena: Box<[u8]> = Box::from(arena);
+        let arena: Rc<[u8]> = Rc::from(arena);
         let arena_ptr = arena.as_ptr();
         let mut strs = Vec::new();
-        strs.push("");
         let mut strs_map = HashMap::default();
         indices.sort_by_key(|(i, _, _)| *i);
         for (i, start, end) in indices {
@@ -66,26 +67,31 @@ pub(crate) struct Resolver {
     // unsafe self referencing
     //
     // The 'static str points to bytes in the arena
-    strs_map: HashMap<&'static str, NonZeroU32, FxBuildHasher>,
+    strs_map: HashMap<&'static str, Sym, FxBuildHasher>,
     strs: Box<[&'static str]>,
     #[allow(unused)]
-    arena: Box<[u8]>,
+    arena: Rc<[u8]>,
 }
 
 impl Resolver {
     #[inline(always)]
-    pub(crate) fn get(&self, val: &str) -> Option<NonZeroU32> {
+    pub(crate) fn get(&self, val: &str) -> Option<Sym> {
         self.strs_map.get(val).copied()
     }
     #[inline(always)]
-    pub(crate) unsafe fn resolve_unchecked(&self, sym: u32) -> &str {
-        self.strs.get_unchecked(sym as usize)
+    pub(crate) unsafe fn resolve_unchecked(&self, sym: Sym) -> &str {
+        self.strs.get_unchecked(sym.into_usize())
     }
     #[inline(always)]
-    pub(crate) unsafe fn resolve_many_unchecked_from_slice(&self, syms: &[u32]) -> Vec<&str> {
-        syms.iter()
-            .map(|sym| *self.strs.get_unchecked(*sym as usize))
-            .collect()
+    pub(crate) unsafe fn resolve_many_unchecked_from_slice(&self, syms: &[Sym]) -> NodeVec {
+        let values = syms
+            .iter()
+            .map(|sym| *self.strs.get_unchecked(sym.into_usize()))
+            .collect();
+        NodeVec {
+            values,
+            arena: Rc::clone(&self.arena),
+        }
     }
     #[inline]
     pub(crate) fn len(&self) -> usize {
@@ -116,11 +122,11 @@ impl<'de> serde::Deserialize<'de> for Resolver {
     {
         let mut builder = InternerBuilder::new();
         let values: Vec<Box<str>> = Vec::deserialize(deserializer)?;
-        for val in values.into_iter().skip(1) {
+        for val in values {
             match builder.map_strs.entry(val) {
                 std::collections::hash_map::Entry::Vacant(vac) => {
                     vac.insert(builder.count);
-                    builder.count = builder.count.saturating_add(1);
+                    builder.count += 1;
                 }
                 std::collections::hash_map::Entry::Occupied(_) => {
                     return Err(serde::de::Error::custom("Duplicate value"));
@@ -142,9 +148,9 @@ mod tests {
         let int1 = builder.get_or_intern("Hello");
         let int2 = builder.get_or_intern("World");
         let resolver = builder.build();
-        assert_eq!(resolver.strs, Box::from(["", "Hello", "World"]));
-        assert_eq!(int1.get(), 1);
-        assert_eq!(int2.get(), 2);
+        assert_eq!(resolver.strs, Box::from(["Hello", "World"]));
+        assert_eq!(int1, 0);
+        assert_eq!(int2, 1);
     }
 
     #[test]
@@ -153,12 +159,12 @@ mod tests {
         let int1 = builder.get_or_intern("Hello");
         let int2 = builder.get_or_intern("World");
         let resolver = builder.build();
-        assert_eq!(resolver.strs, Box::from(["", "Hello", "World"]));
-        assert_eq!(int1.get(), 1);
-        assert_eq!(int2.get(), 2);
+        assert_eq!(resolver.strs, Box::from(["Hello", "World"]));
+        assert_eq!(int1, 0);
+        assert_eq!(int2, 1);
 
         let resolver2 = resolver;
 
-        assert_eq!(resolver2.strs, Box::from(["", "Hello", "World"]));
+        assert_eq!(resolver2.strs, Box::from(["Hello", "World"]));
     }
 }

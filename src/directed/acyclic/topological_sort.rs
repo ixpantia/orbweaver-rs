@@ -1,6 +1,9 @@
-use crate::{directed::LazySet, prelude::*};
+use crate::{
+    prelude::*,
+    utils::{node_map::LazySet, sym::Sym},
+};
 
-pub fn topological_sort(dg: &DirectedGraph) -> Result<Vec<u32>, GraphHasCycle> {
+pub fn topological_sort(dg: &DirectedGraph) -> Result<Vec<Sym>, GraphHasCycle> {
     let mut dg = dg.clone();
     let mut res = Vec::new();
     let mut no_deps = dg.leaves.clone();

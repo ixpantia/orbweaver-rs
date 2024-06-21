@@ -1,5 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use orbweaver::directed::{acyclic::DirectedAcyclicGraph, DirectedGraphBuilder};
+use orbweaver::prelude::*;
 
 const MEDIUM_TXT_PATH: &str = "assets/medium.txt";
 
