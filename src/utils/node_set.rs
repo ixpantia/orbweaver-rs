@@ -31,9 +31,29 @@ impl<const N: usize> PartialEq<[&str; N]> for NodeVec {
     }
 }
 
+const DEFAULT_MAX_PRINT_SIZE: usize = 25;
+
+fn get_max_str_length(nodes: &[&str]) -> usize {
+    let mut max_string_length = DEFAULT_MAX_PRINT_SIZE;
+    for node in nodes.iter().take(10) {
+        max_string_length = max_string_length.max(node.len());
+    }
+    max_string_length
+}
+
 impl std::fmt::Debug for NodeVec {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.values.fmt(f)
+        let n_nodes = self.values.len();
+        let max_string_length = get_max_str_length(self.as_slice());
+        writeln!(f, "# of nodes: {n_nodes}")?;
+        writeln!(f, "| {:^width$} |", "Nodes", width = max_string_length)?;
+        for node in self.as_slice().iter().take(10) {
+            writeln!(f, "| {:^width$} |", node, width = max_string_length)?;
+        }
+        if n_nodes > 10 {
+            writeln!(f, "| {:^width$} |", "...", width = max_string_length)?;
+        }
+        Ok(())
     }
 }
 
