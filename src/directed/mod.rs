@@ -339,9 +339,7 @@ impl DirectedGraph {
                 LazySet::Initialized(children) => {
                     children.iter().for_each(|child| to_visit.push(*child))
                 }
-                LazySet::Uninitialized if self.leaves.binary_search(&node).is_ok() => {
-                    leaves.push(node)
-                }
+                LazySet::Empty => leaves.push(node),
                 _ => (),
             }
         }
@@ -380,9 +378,7 @@ impl DirectedGraph {
                 LazySet::Initialized(parents) => {
                     parents.iter().for_each(|parent| to_visit.push(*parent))
                 }
-                LazySet::Uninitialized if self.roots.binary_search(&node).is_ok() => {
-                    roots.push(node)
-                }
+                LazySet::Empty => roots.push(node),
                 _ => (),
             }
         }
@@ -412,15 +408,21 @@ impl DirectedGraph {
         let mut queue = VecDeque::new();
         let mut n_edges = 0;
 
+        parent_map.get_mut(node).into_empty();
+
         // Having no parent really only happens
         // on the first iteration. So we take it out of the loop
         // to optimize
         visited.insert(node);
         match self.children_map.get(node) {
-            LazySet::Uninitialized => leaves.push(node),
             LazySet::Initialized(children) => children.iter().for_each(|&child| {
                 queue.push_back((node, child));
             }),
+            LazySet::Empty => {
+                children_map.get_mut(node).into_empty();
+                leaves.push(node);
+            }
+            LazySet::Uninitialized => (),
         }
 
         while let Some((parent, node)) = queue.pop_front() {
@@ -439,10 +441,14 @@ impl DirectedGraph {
             // we recurse, else we insert it
             // as a leaf
             match self.children_map.get(node) {
-                LazySet::Uninitialized => leaves.push(node),
+                LazySet::Empty => {
+                    leaves.push(node);
+                    children_map.get_mut(node).into_empty();
+                }
                 LazySet::Initialized(children) => children.iter().for_each(|child| {
                     queue.push_back((node, *child));
                 }),
+                LazySet::Uninitialized => (),
             }
         }
 

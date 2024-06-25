@@ -68,7 +68,7 @@ impl std::fmt::Debug for DirectedGraph {
                         }
                     }
                 }
-                LazySet::Uninitialized => continue,
+                _ => continue,
             }
         }
 

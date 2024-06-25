@@ -111,6 +111,19 @@ impl DirectedGraphBuilder {
                 .insert(self.parents[i]);
         }
 
+        // Every parent and child must have been initialized. If it
+        // has not that means it's empty.
+        for node in &nodes {
+            let parent_entry = parent_map.get_mut(*node);
+            let child_entry = children_map.get_mut(*node);
+            if parent_entry.is_uninitialized() {
+                parent_entry.into_empty();
+            }
+            if child_entry.is_uninitialized() {
+                child_entry.into_empty();
+            }
+        }
+
         DirectedGraph {
             interner,
             leaves,

@@ -7,6 +7,7 @@ use super::sym::Sym;
 pub(crate) enum LazySet {
     Initialized(FxHashSet<Sym>),
     Uninitialized,
+    Empty,
 }
 
 impl LazySet {
@@ -23,12 +24,32 @@ impl LazySet {
         }
     }
 
+    pub(crate) fn into_empty(&mut self) {
+        *self = LazySet::Empty
+    }
+
     /// Returns `true` if the lazy set is [`Initialized`].
     ///
     /// [`Initialized`]: LazySet::Initialized
     #[must_use]
     fn is_initialized(&self) -> bool {
         matches!(self, Self::Initialized(..))
+    }
+
+    /// Returns `true` if the lazy set is [`Empty`].
+    ///
+    /// [`Empty`]: LazySet::Empty
+    #[must_use]
+    pub(crate) fn is_empty(&self) -> bool {
+        matches!(self, Self::Empty)
+    }
+
+    /// Returns `true` if the lazy set is [`Uninitialized`].
+    ///
+    /// [`Uninitialized`]: LazySet::Uninitialized
+    #[must_use]
+    pub(crate) fn is_uninitialized(&self) -> bool {
+        matches!(self, Self::Uninitialized)
     }
 }
 
