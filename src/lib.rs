@@ -3,7 +3,7 @@ pub mod error;
 pub mod readwrite;
 pub(crate) mod utils;
 
-pub(crate) const CURRENT_VERSION: [u32; 2] = [0, 12];
+pub(crate) const CURRENT_VERSION: [u32; 2] = [0, 14];
 
 // Prelude of data types and functionality.
 pub mod prelude {
