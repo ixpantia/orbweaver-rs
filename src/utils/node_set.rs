@@ -7,6 +7,16 @@ pub struct NodeVec {
     pub(crate) arena: Rc<[u8]>,
 }
 
+#[cfg(feature = "serde")]
+impl serde::Serialize for NodeVec {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.values.serialize(serializer)
+    }
+}
+
 impl PartialEq for NodeVec {
     fn eq(&self, other: &Self) -> bool {
         self.values.eq(&other.values)
@@ -108,5 +118,23 @@ impl<'a> Iterator for NodeVecIter<'a> {
         let i = self.i;
         self.i += 1;
         self.node_set.values.get(i).copied()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::directed::builder::DirectedGraphBuilder;
+
+    #[test]
+    fn test_serialize_nodevec() {
+        let mut builder = DirectedGraphBuilder::new();
+        builder.add_path(["0", "1", "2", "3", "4"]);
+        builder.add_path(["0", "4"]);
+        let graph = builder.build_acyclic().unwrap();
+
+        let paths = graph.find_all_paths("0", "4").unwrap();
+        let result = serde_json::to_string(&paths).expect("Unable to serialize Vec<NodeVec>");
+
+        assert_eq!(result, r#"[["0","1","2","3","4"],["0","4"]]"#);
     }
 }
