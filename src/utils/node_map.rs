@@ -12,7 +12,7 @@ pub(crate) enum LazySet {
 
 impl LazySet {
     pub(crate) fn or_init(&mut self) -> &mut FxHashSet<Sym> {
-        if let LazySet::Uninitialized = self {
+        if let LazySet::Uninitialized | LazySet::Empty = self {
             *self = LazySet::Initialized(FxHashSet::default());
         }
 
@@ -93,5 +93,10 @@ impl NodeMap {
             .filter(|i| self.map[*i].is_initialized())
             .map(|i| Sym::new(i as u32))
             .collect()
+    }
+    pub(crate) fn initialized_keys_iter(&self) -> impl Iterator<Item = Sym> + '_ {
+        (0..self.len())
+            .filter(|i| self.map[*i].is_initialized())
+            .map(|i| Sym::new(i as u32))
     }
 }

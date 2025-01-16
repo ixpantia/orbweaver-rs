@@ -543,10 +543,117 @@ impl DirectedGraph {
         }
     }
 
+    fn subset_multi_u32(&self, nodes_subset: &[Sym]) -> DirectedGraph {
+        if nodes_subset.is_empty() {
+            return self.clone();
+        }
+
+        let leaves = unsafe { self.u32x1_vec_1() };
+        let visited = unsafe { self.u32x1_set_0() };
+        let mut children_map = NodeMap::new(self.interner.len());
+        let mut parent_map = NodeMap::new(self.interner.len());
+        let mut queue = VecDeque::new();
+        let mut n_edges = 0;
+        let mut nodes = Vec::new();
+
+        for &node in nodes_subset {
+            if visited.contains(&node) {
+                continue;
+            }
+
+            parent_map.get_mut(node).into_empty();
+
+            visited.insert(node);
+            match self.children_map.get(node) {
+                LazySet::Initialized(children) => children.iter().for_each(|&child| {
+                    queue.push_back((node, child));
+                }),
+                LazySet::Empty => {
+                    children_map.get_mut(node).into_empty();
+                    leaves.push(node);
+                }
+                LazySet::Uninitialized => (),
+            }
+
+            // Now we will iterate over the whole graph to find
+            // the subsets
+            'queue: while let Some((parent, node)) = queue.pop_front() {
+                // If we have a parent we add the relationship
+                children_map.get_mut(parent).or_init().insert(node);
+                parent_map.get_mut(node).or_init().insert(parent);
+                n_edges += 1;
+
+                // If we have already visited this node
+                // we return :)
+                if !visited.insert(node) {
+                    continue 'queue;
+                }
+
+                // If this node has children then
+                // we recurse, else we insert it
+                // as a leaf
+                match self.children_map.get(node) {
+                    LazySet::Empty => {
+                        leaves.push(node);
+                        children_map.get_mut(node).into_empty();
+                    }
+                    LazySet::Initialized(children) => children.iter().for_each(|child| {
+                        queue.push_back((node, *child));
+                    }),
+                    LazySet::Uninitialized => (),
+                }
+            }
+
+            let initialized_keys = parent_map.initialized_keys_iter();
+            nodes.extend(initialized_keys);
+            nodes.push(node);
+        }
+
+        // Re order values
+        nodes.sort_unstable();
+        nodes.dedup();
+
+        leaves.sort_unstable();
+        leaves.dedup();
+
+        // now that we re-built our graph we need to find
+        // the roots of the new graph. Since there is not
+        // guarantee that all of the given nodes are roots,
+        // we will need to iterate over each one to determine
+        // which ones have not been initialized
+        let roots = nodes
+            .iter()
+            .copied()
+            .filter(|&n| parent_map.get(n).is_empty())
+            .collect::<Vec<_>>();
+
+        DirectedGraph {
+            interner: Rc::clone(&self.interner),
+            nodes,
+            leaves: leaves.clone(),
+            roots,
+            n_edges,
+            parent_map,
+            children_map,
+            buf: InternalBufs::default(),
+        }
+    }
+
     /// Returns a new tree that is the subset of of all children under a
     /// node.
     pub fn subset(&self, node: impl AsRef<str>) -> GraphInteractionResult<DirectedGraph> {
         self.get_internal(node).map(|node| self.subset_u32(node))
+    }
+
+    /// Returns a new tree that is the subset of of all children under some
+    /// nodes.
+    pub fn subset_multi(
+        &self,
+        node: impl IntoIterator<Item = impl AsRef<str>>,
+    ) -> GraphInteractionResult<DirectedGraph> {
+        let buf = unsafe { self.u32x1_vec_0() };
+        self.get_internal_mul(node, buf)?;
+        Ok(self.subset_multi_u32(buf))
     }
 
     pub fn nodes(&self) -> NodeVec {
@@ -815,6 +922,61 @@ mod tests {
         builder.add_edge("C", "H");
         let dg = builder.clone().build_directed();
         let dg2 = dg.subset("A").unwrap();
+        // This should not include children on "0" since
+        // the subset has no concept of those relationships
+        assert_eq!(dg2.get_roots_over(["A"]).unwrap(), ["A"]);
+        assert_eq!(dg2.get_roots_over(["H"]).unwrap(), ["A"]);
+        assert_eq!(dg2.get_roots_over(["H", "C", "1"]).unwrap(), ["A"]);
+        assert_eq!(dg2.nodes(), ["A", "B", "C", "D", "H"]);
+    }
+
+    #[test]
+    fn dg_subset_multi_single_node() {
+        let mut builder = DirectedGraphBuilder::new();
+        builder.add_edge("0", "1");
+        builder.add_edge("A", "B");
+        builder.add_edge("A", "C");
+        builder.add_edge("C", "D");
+        builder.add_edge("C", "H");
+        let dg = builder.clone().build_directed();
+        let dg2 = dg.subset_multi(&["A"]).unwrap();
+        // This should not include children on "0" since
+        // the subset has no concept of those relationships
+        assert_eq!(dg2.get_roots_over(["A"]).unwrap(), ["A"]);
+        assert_eq!(dg2.get_roots_over(["H"]).unwrap(), ["A"]);
+        assert_eq!(dg2.get_roots_over(["H", "C", "1"]).unwrap(), ["A"]);
+        assert_eq!(dg2.nodes(), ["A", "B", "C", "D", "H"]);
+    }
+
+    #[test]
+    fn dg_subset_multi_many_nodes_all_roots() {
+        let mut builder = DirectedGraphBuilder::new();
+        builder.add_edge("0", "1");
+        builder.add_edge("A", "B");
+        builder.add_edge("A", "C");
+        builder.add_edge("C", "D");
+        builder.add_edge("C", "H");
+        let dg = builder.clone().build_directed();
+        let dg2 = dg.subset_multi(&["A", "0"]).unwrap();
+        // This should not include children on "0" since
+        // the subset has no concept of those relationships
+        assert_eq!(dg2.get_roots_over(["A"]).unwrap(), ["A"]);
+        assert_eq!(dg2.get_roots_over(["H"]).unwrap(), ["A"]);
+        assert_eq!(dg2.get_all_roots(), vec!["0", "A"]);
+        assert_eq!(dg2.get_roots_over(["H", "C", "1"]).unwrap(), ["0", "A"]);
+        assert_eq!(dg2.nodes(), ["0", "1", "A", "B", "C", "D", "H"]);
+    }
+
+    #[test]
+    fn dg_subset_multi_many_nodes_single_roots() {
+        let mut builder = DirectedGraphBuilder::new();
+        builder.add_edge("0", "1");
+        builder.add_edge("A", "B");
+        builder.add_edge("A", "C");
+        builder.add_edge("C", "D");
+        builder.add_edge("C", "H");
+        let dg = builder.clone().build_directed();
+        let dg2 = dg.subset_multi(&["A", "D"]).unwrap();
         // This should not include children on "0" since
         // the subset has no concept of those relationships
         assert_eq!(dg2.get_roots_over(["A"]).unwrap(), ["A"]);
