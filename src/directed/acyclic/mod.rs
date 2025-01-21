@@ -106,6 +106,14 @@ impl DirectedAcyclicGraph {
         let dg = Box::new(self.dg.subset(node)?);
         Ok(DirectedAcyclicGraph { dg })
     }
+
+    pub fn subset_multi(
+        &self,
+        node: impl IntoIterator<Item = impl AsRef<str>>,
+    ) -> GraphInteractionResult<DirectedAcyclicGraph> {
+        let dg = Box::new(self.dg.subset_multi(node)?);
+        Ok(DirectedAcyclicGraph { dg })
+    }
 }
 
 impl Deref for DirectedAcyclicGraph {
