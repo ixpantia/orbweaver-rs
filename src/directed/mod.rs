@@ -466,84 +466,6 @@ impl DirectedGraph {
         Ok(self.resolve_mul_slice(roots))
     }
 
-    fn subset_u32(&self, node: Sym) -> DirectedGraph {
-        // When subsetting the graph the only root will be
-        // the node we select. This is because we are selecting
-        // it and all their dependants.
-        let roots = vec![node];
-        let leaves = unsafe { self.u32x1_vec_0() };
-        let visited = unsafe { self.u32x1_set_0() };
-        let mut children_map = NodeMap::new(self.interner.len());
-        let mut parent_map = NodeMap::new(self.interner.len());
-        let mut queue = VecDeque::new();
-        let mut n_edges = 0;
-
-        parent_map.get_mut(node).into_empty();
-
-        // Having no parent really only happens
-        // on the first iteration. So we take it out of the loop
-        // to optimize
-        visited.insert(node);
-        match self.children_map.get(node) {
-            LazySet::Initialized(children) => children.iter().for_each(|&child| {
-                queue.push_back((node, child));
-            }),
-            LazySet::Empty => {
-                children_map.get_mut(node).into_empty();
-                leaves.push(node);
-            }
-            LazySet::Uninitialized => (),
-        }
-
-        while let Some((parent, node)) = queue.pop_front() {
-            // If we have a parent we add the relationship
-            children_map.get_mut(parent).or_init().insert(node);
-            parent_map.get_mut(node).or_init().insert(parent);
-            n_edges += 1;
-
-            // If we have already visited this node
-            // we return :)
-            if !visited.insert(node) {
-                continue;
-            }
-
-            // If this node has children then
-            // we recurse, else we insert it
-            // as a leaf
-            match self.children_map.get(node) {
-                LazySet::Empty => {
-                    leaves.push(node);
-                    children_map.get_mut(node).into_empty();
-                }
-                LazySet::Initialized(children) => children.iter().for_each(|child| {
-                    queue.push_back((node, *child));
-                }),
-                LazySet::Uninitialized => (),
-            }
-        }
-
-        let mut nodes = parent_map.initialized_keys();
-        nodes.push(node);
-
-        // Re order values
-        nodes.sort_unstable();
-        nodes.dedup();
-
-        leaves.sort_unstable();
-        leaves.dedup();
-
-        DirectedGraph {
-            interner: Rc::clone(&self.interner),
-            nodes,
-            leaves: leaves.clone(),
-            roots,
-            n_edges,
-            parent_map,
-            children_map,
-            buf: InternalBufs::default(),
-        }
-    }
-
     fn subset_multi_u32(&self, nodes_subset: &[Sym]) -> DirectedGraph {
         if nodes_subset.is_empty() {
             return self.clone();
@@ -750,7 +672,19 @@ impl DirectedGraph {
     /// Returns a new tree that is the subset of of all children under a
     /// node.
     pub fn subset(&self, node: impl AsRef<str>) -> GraphInteractionResult<DirectedGraph> {
-        self.get_internal(node).map(|node| self.subset_u32(node))
+        self.get_internal(node)
+            .map(|node| self.subset_multi_u32(&[node]))
+    }
+
+    /// Returns a new tree that is the subset of of all children under a
+    /// node.
+    pub fn subset_with_limit(
+        &self,
+        node: impl AsRef<str>,
+        limit: NonZeroUsize,
+    ) -> GraphInteractionResult<DirectedGraph> {
+        self.get_internal(node)
+            .map(|node| self.subset_multi_u32_with_limit(&[node], limit))
     }
 
     /// Returns a new tree that is the subset of of all children under some
