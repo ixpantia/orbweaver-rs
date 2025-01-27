@@ -3,7 +3,7 @@ use crate::{
     prelude::*,
     utils::{node_set::NodeVec, sym::Sym},
 };
-use std::ops::Deref;
+use std::{num::NonZeroUsize, ops::Deref};
 mod topological_sort;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -112,6 +112,14 @@ impl DirectedAcyclicGraph {
         node: impl IntoIterator<Item = impl AsRef<str>>,
     ) -> GraphInteractionResult<DirectedAcyclicGraph> {
         let dg = Box::new(self.dg.subset_multi(node)?);
+        Ok(DirectedAcyclicGraph { dg })
+    }
+    pub fn subset_multi_with_limit(
+        &self,
+        node: impl IntoIterator<Item = impl AsRef<str>>,
+        limit: NonZeroUsize,
+    ) -> GraphInteractionResult<DirectedAcyclicGraph> {
+        let dg = Box::new(self.dg.subset_multi_with_limit(node, limit)?);
         Ok(DirectedAcyclicGraph { dg })
     }
 }

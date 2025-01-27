@@ -57,6 +57,7 @@ impl std::error::Error for BinaryError {}
 pub enum GraphInteractionError {
     NodeNotExist(Box<str>),
     InternalResolve(u32),
+    ZeroSubsetLimit,
 }
 
 impl GraphInteractionError {
@@ -73,6 +74,9 @@ impl std::fmt::Display for GraphInteractionError {
             }
             Self::InternalResolve(symbol) => {
                 write!(f, "Internal symbol `{}` does not exist", symbol)
+            }
+            Self::ZeroSubsetLimit => {
+                write!(f, "Cannot set a `0` limit for a subset operation")
             }
         }
     }
