@@ -17,6 +17,7 @@ use crate::{
 use fxhash::FxHashSet;
 use std::{
     collections::{HashMap, VecDeque},
+    num::NonZeroUsize,
     ops::Not,
     rc::Rc,
 };
@@ -465,84 +466,6 @@ impl DirectedGraph {
         Ok(self.resolve_mul_slice(roots))
     }
 
-    fn subset_u32(&self, node: Sym) -> DirectedGraph {
-        // When subsetting the graph the only root will be
-        // the node we select. This is because we are selecting
-        // it and all their dependants.
-        let roots = vec![node];
-        let leaves = unsafe { self.u32x1_vec_0() };
-        let visited = unsafe { self.u32x1_set_0() };
-        let mut children_map = NodeMap::new(self.interner.len());
-        let mut parent_map = NodeMap::new(self.interner.len());
-        let mut queue = VecDeque::new();
-        let mut n_edges = 0;
-
-        parent_map.get_mut(node).into_empty();
-
-        // Having no parent really only happens
-        // on the first iteration. So we take it out of the loop
-        // to optimize
-        visited.insert(node);
-        match self.children_map.get(node) {
-            LazySet::Initialized(children) => children.iter().for_each(|&child| {
-                queue.push_back((node, child));
-            }),
-            LazySet::Empty => {
-                children_map.get_mut(node).into_empty();
-                leaves.push(node);
-            }
-            LazySet::Uninitialized => (),
-        }
-
-        while let Some((parent, node)) = queue.pop_front() {
-            // If we have a parent we add the relationship
-            children_map.get_mut(parent).or_init().insert(node);
-            parent_map.get_mut(node).or_init().insert(parent);
-            n_edges += 1;
-
-            // If we have already visited this node
-            // we return :)
-            if !visited.insert(node) {
-                continue;
-            }
-
-            // If this node has children then
-            // we recurse, else we insert it
-            // as a leaf
-            match self.children_map.get(node) {
-                LazySet::Empty => {
-                    leaves.push(node);
-                    children_map.get_mut(node).into_empty();
-                }
-                LazySet::Initialized(children) => children.iter().for_each(|child| {
-                    queue.push_back((node, *child));
-                }),
-                LazySet::Uninitialized => (),
-            }
-        }
-
-        let mut nodes = parent_map.initialized_keys();
-        nodes.push(node);
-
-        // Re order values
-        nodes.sort_unstable();
-        nodes.dedup();
-
-        leaves.sort_unstable();
-        leaves.dedup();
-
-        DirectedGraph {
-            interner: Rc::clone(&self.interner),
-            nodes,
-            leaves: leaves.clone(),
-            roots,
-            n_edges,
-            parent_map,
-            children_map,
-            buf: InternalBufs::default(),
-        }
-    }
-
     fn subset_multi_u32(&self, nodes_subset: &[Sym]) -> DirectedGraph {
         if nodes_subset.is_empty() {
             return self.clone();
@@ -639,10 +562,129 @@ impl DirectedGraph {
         }
     }
 
+    fn subset_multi_u32_with_limit(
+        &self,
+        nodes_subset: &[Sym],
+        limit: NonZeroUsize,
+    ) -> DirectedGraph {
+        if nodes_subset.is_empty() {
+            return self.clone();
+        }
+
+        let leaves = unsafe { self.u32x1_vec_1() };
+        let visited = unsafe { self.u32x1_set_0() };
+        let mut children_map = NodeMap::new(self.interner.len());
+        let mut parent_map = NodeMap::new(self.interner.len());
+        let mut queue = VecDeque::new();
+        let mut n_edges = 0;
+        let mut nodes = Vec::new();
+
+        for &node in nodes_subset {
+            if visited.contains(&node) {
+                continue;
+            }
+
+            parent_map.get_mut(node).into_empty();
+
+            visited.insert(node);
+            match self.children_map.get(node) {
+                LazySet::Initialized(children) => children.iter().for_each(|&child| {
+                    queue.push_back((unsafe { NonZeroUsize::new_unchecked(1) }, node, child));
+                }),
+                LazySet::Empty => {
+                    children_map.get_mut(node).into_empty();
+                    leaves.push(node);
+                }
+                LazySet::Uninitialized => (),
+            }
+
+            // Now we will iterate over the whole graph to find
+            // the subsets
+            'queue: while let Some((level, parent, node)) = queue.pop_front() {
+                // If we have a parent we add the relationship
+                children_map.get_mut(parent).or_init().insert(node);
+                parent_map.get_mut(node).or_init().insert(parent);
+                n_edges += 1;
+
+                // If we have already visited this node
+                // we return :)
+                if !visited.insert(node) {
+                    continue 'queue;
+                }
+
+                // If this node has children then
+                // we recurse, else we insert it
+                // as a leaf
+                match self.children_map.get(node) {
+                    LazySet::Empty => {
+                        leaves.push(node);
+                        children_map.get_mut(node).into_empty();
+                    }
+                    LazySet::Initialized(_) if level >= limit => {
+                        leaves.push(node);
+                        children_map.get_mut(node).into_empty();
+                    }
+                    LazySet::Initialized(children) => children.iter().for_each(|child| match level
+                        .checked_add(1)
+                    {
+                        None => panic!("Reached hardware count limit"),
+                        Some(level) => queue.push_back((level, node, *child)),
+                    }),
+                    LazySet::Uninitialized => (),
+                }
+            }
+
+            let initialized_keys = parent_map.initialized_keys_iter();
+            nodes.extend(initialized_keys);
+            nodes.push(node);
+        }
+
+        // Re order values
+        nodes.sort_unstable();
+        nodes.dedup();
+
+        leaves.sort_unstable();
+        leaves.dedup();
+
+        // now that we re-built our graph we need to find
+        // the roots of the new graph. Since there is not
+        // guarantee that all of the given nodes are roots,
+        // we will need to iterate over each one to determine
+        // which ones have not been initialized
+        let roots = nodes
+            .iter()
+            .copied()
+            .filter(|&n| parent_map.get(n).is_empty())
+            .collect::<Vec<_>>();
+
+        DirectedGraph {
+            interner: Rc::clone(&self.interner),
+            nodes,
+            leaves: leaves.clone(),
+            roots,
+            n_edges,
+            parent_map,
+            children_map,
+            buf: InternalBufs::default(),
+        }
+    }
+
     /// Returns a new tree that is the subset of of all children under a
     /// node.
     pub fn subset(&self, node: impl AsRef<str>) -> GraphInteractionResult<DirectedGraph> {
-        self.get_internal(node).map(|node| self.subset_u32(node))
+        self.get_internal(node)
+            .map(|node| self.subset_multi_u32(&[node]))
+    }
+
+    /// Returns a new tree that is the subset of of all children under a
+    /// node.
+    pub fn subset_with_limit(
+        &self,
+        node: impl AsRef<str>,
+        limit: NonZeroUsize,
+    ) -> GraphInteractionResult<DirectedGraph> {
+        self.get_internal(node)
+            .map(|node| self.subset_multi_u32_with_limit(&[node], limit))
     }
 
     /// Returns a new tree that is the subset of of all children under some
@@ -654,6 +696,16 @@ impl DirectedGraph {
         let buf = unsafe { self.u32x1_vec_0() };
         self.get_internal_mul(node, buf)?;
         Ok(self.subset_multi_u32(buf))
+    }
+
+    pub fn subset_multi_with_limit(
+        &self,
+        node: impl IntoIterator<Item = impl AsRef<str>>,
+        limit: NonZeroUsize,
+    ) -> GraphInteractionResult<DirectedGraph> {
+        let buf = unsafe { self.u32x1_vec_0() };
+        self.get_internal_mul(node, buf)?;
+        Ok(self.subset_multi_u32_with_limit(buf, limit))
     }
 
     pub fn nodes(&self) -> NodeVec {
@@ -1005,5 +1057,132 @@ mod tests {
                 vec!["0", "4"],
             ]
         );
+    }
+
+    #[test]
+    fn dg_subset_multi_with_limit_single_root() {
+        let mut builder = DirectedGraphBuilder::new();
+        builder.add_edge("A", "B");
+        builder.add_edge("A", "C");
+        builder.add_edge("C", "D");
+        builder.add_edge("C", "E");
+        builder.add_edge("E", "F");
+        let dg = builder.clone().build_directed();
+
+        // Limit to 1 level
+        let dg2 = dg
+            .subset_multi_with_limit(&["A"], NonZeroUsize::new(1).unwrap())
+            .unwrap();
+        assert_eq!(dg2.nodes(), ["A", "B", "C"]);
+
+        // Limit to 2 levels
+        let dg3 = dg
+            .subset_multi_with_limit(&["A"], NonZeroUsize::new(2).unwrap())
+            .unwrap();
+        assert_eq!(dg3.nodes(), ["A", "B", "C", "D", "E"]);
+
+        // Limit to 3 levels
+        let dg4 = dg
+            .subset_multi_with_limit(&["A"], NonZeroUsize::new(3).unwrap())
+            .unwrap();
+        assert_eq!(dg4.nodes(), ["A", "B", "C", "D", "E", "F"]);
+    }
+
+    #[test]
+    fn dg_subset_multi_with_limit_multiple_roots() {
+        let mut builder = DirectedGraphBuilder::new();
+        builder.add_edge("A", "B");
+        builder.add_edge("A", "C");
+        builder.add_edge("C", "D");
+        builder.add_edge("X", "Y");
+        builder.add_edge("Y", "Z");
+        let dg = builder.clone().build_directed();
+
+        // Limit to 1 level
+        let dg2 = dg
+            .subset_multi_with_limit(&["A", "X"], NonZeroUsize::new(1).unwrap())
+            .unwrap();
+        assert_eq!(dg2.nodes(), ["A", "B", "C", "X", "Y"]);
+
+        // Limit to 2 levels
+        let dg3 = dg
+            .subset_multi_with_limit(&["A", "X"], NonZeroUsize::new(2).unwrap())
+            .unwrap();
+        assert_eq!(dg3.nodes(), ["A", "B", "C", "D", "X", "Y", "Z"]);
+    }
+
+    #[test]
+    fn dg_subset_multi_with_limit_exceeding_depth() {
+        let mut builder = DirectedGraphBuilder::new();
+        builder.add_edge("A", "B");
+        builder.add_edge("B", "C");
+        builder.add_edge("C", "D");
+        builder.add_edge("D", "E");
+        let dg = builder.clone().build_directed();
+
+        // Limit greater than actual depth
+        let dg2 = dg
+            .subset_multi_with_limit(&["A"], NonZeroUsize::new(10).unwrap())
+            .unwrap();
+        assert_eq!(dg2.nodes(), ["A", "B", "C", "D", "E"]);
+    }
+
+    #[test]
+    fn dg_subset_multi_with_limit_disjoint_graphs() {
+        let mut builder = DirectedGraphBuilder::new();
+        builder.add_edge("A", "B");
+        builder.add_edge("A", "C");
+        builder.add_edge("X", "Y");
+        builder.add_edge("Y", "Z");
+        let dg = builder.clone().build_directed();
+
+        // Limit to 1 level, starting from both disjoint roots
+        let dg2 = dg
+            .subset_multi_with_limit(&["A", "X"], NonZeroUsize::new(1).unwrap())
+            .unwrap();
+        assert_eq!(dg2.nodes(), ["A", "B", "C", "X", "Y"]);
+    }
+
+    #[test]
+    fn dg_subset_multi_with_limit_missing_root() {
+        let mut builder = DirectedGraphBuilder::new();
+        builder.add_edge("A", "B");
+        builder.add_edge("B", "C");
+        let dg = builder.clone().build_directed();
+
+        // "Z" does not exist in the graph.
+        // Depending on your implementation, this might return an Err or an empty subgraph.
+        // Adjust the assertion accordingly based on the expected behavior.
+        let res = dg.subset_multi_with_limit(&["Z"], NonZeroUsize::new(1).unwrap());
+        assert!(
+            res.is_err(),
+            "Expected an error because root 'Z' doesn't exist in the graph."
+        );
+    }
+
+    #[test]
+    fn dg_subset_multi_with_limit_cycle() {
+        // A --> B --> C
+        // ^           |
+        // |-----------|
+        let mut builder = DirectedGraphBuilder::new();
+        builder.add_edge("A", "B");
+        builder.add_edge("B", "C");
+        builder.add_edge("C", "A");
+        let dg = builder.build_directed();
+
+        // Cycle detection or repeated visitation logic should ensure we don't loop infinitely.
+        // A limit of 2 should return all nodes in the cycle since once we reach "C", "A" is
+        // already visited. The exact behavior depends on how your function handles cycles.
+        let dg2 = dg
+            .subset_multi_with_limit(&["A"], NonZeroUsize::new(2).unwrap())
+            .unwrap();
+
+        // All nodes in the cycle should appear: A, B, C
+        // The exact traversal might pick them up at limit=1 as well, but let's confirm it's not missing any.
+        assert_eq!(dg2.nodes().len(), 3);
+        assert!(dg2.nodes().as_slice().contains(&"A"));
+        assert!(dg2.nodes().as_slice().contains(&"B"));
+        assert!(dg2.nodes().as_slice().contains(&"C"));
     }
 }
