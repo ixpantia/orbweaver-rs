@@ -1,6 +1,6 @@
 [package]
 name = "orbweaver"
-version = "0.18.0"
+version = "0.18.1"
 edition = "2021"
 authors = ["ixpantia <hola@ixpantia.com>", "Andrés F. Quintero <andres@ixpantia.com>"]
 description = "Crate designed for effortless construction and analysis of graph data structures."
@@ -11,6 +11,7 @@ exclude = ["assets/"]
 
 [dev-dependencies]
 criterion = "0.5"
+ntest_timeout = "0.9.3"
 serde_json = "1.0.132"
 ureq = "2.9.7"
 
