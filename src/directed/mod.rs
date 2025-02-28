@@ -221,6 +221,9 @@ impl DirectedGraph {
         let path = unsafe { self.u32x2_vec_0() }; // To track the path back to the start node
 
         'to: for to in to {
+            queue.clear();
+            visited.clear();
+            path.clear();
             path_buf.clear();
             path_buf2.clear();
 
@@ -231,9 +234,6 @@ impl DirectedGraph {
                 paths.push(vec![from]);
                 continue 'to;
             }
-
-            queue.clear();
-            visited.clear();
 
             // Initialize
             queue.push_back(to);
