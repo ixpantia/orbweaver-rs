@@ -83,3 +83,18 @@ impl std::fmt::Display for GraphInteractionError {
 }
 
 impl std::error::Error for GraphInteractionError {}
+
+#[derive(Debug)]
+pub enum GraphBuilderError {
+    LengthOnePath,
+}
+
+impl std::fmt::Display for GraphBuilderError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::LengthOnePath => {
+                write!(f, "The provided path is length one.")
+            }
+        }
+    }
+}

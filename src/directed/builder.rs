@@ -3,7 +3,7 @@ use std::rc::Rc;
 use crate::utils::{interner::InternerBuilder, node_map::NodeMap, sym::Sym};
 use rayon::prelude::*;
 
-use super::{DirectedAcyclicGraph, DirectedGraph, GraphHasCycle};
+use super::{DirectedAcyclicGraph, DirectedGraph, GraphBuilderError, GraphHasCycle};
 
 #[derive(Clone)]
 pub struct DirectedGraphBuilder {
@@ -54,12 +54,21 @@ impl DirectedGraphBuilder {
         self.children.push(to);
         self
     }
-    pub fn add_path(&mut self, path: impl IntoIterator<Item = impl AsRef<str>>) -> &mut Self {
+    pub fn add_path(
+        &mut self,
+        path: impl IntoIterator<Item = impl AsRef<str>>,
+    ) -> Result<&mut Self, GraphBuilderError> {
         let mut path = path.into_iter().peekable();
+
+        // if it's length 1 (if peek is None) we return an error
+        if path.peek().is_none() {
+            return Err(GraphBuilderError::LengthOnePath);
+        }
+
         while let (Some(from), Some(to)) = (path.next(), path.peek()) {
             self.add_edge(from.as_ref(), to.as_ref());
         }
-        self
+        Ok(self)
     }
 
     pub fn build_directed(self) -> DirectedGraph {
