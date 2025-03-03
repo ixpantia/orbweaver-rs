@@ -241,7 +241,8 @@ impl DirectedGraph {
 
             while let Some(current) = queue.pop_front() {
                 if let Some(pre_calculated_path) = path_cache.get(&(from, current)) {
-                    construct_path(path, current, to, path_buf);
+                    construct_path(path, to, current, path_buf);
+                    path_buf.reverse();
                     pre_calculated_path.iter().for_each(|&s| path_buf2.push(s));
                     for node in path_buf.drain(..).skip(1) {
                         path_buf2.push(node);
@@ -253,10 +254,11 @@ impl DirectedGraph {
                 if let LazySet::Initialized(parents) = self.parent_map.get(current) {
                     for &parent in parents.iter() {
                         if visited.insert(parent) {
-                            path.push((current, parent));
+                            path.push((parent, current));
                             if parent == from {
                                 // Construct the path and place it in `path_buf`
-                                construct_path(path, from, to, path_buf);
+                                construct_path(path, to, from, path_buf);
+                                path_buf.reverse();
                                 path_cache.insert((from, to), path_buf.clone());
                                 paths.push(path_buf.clone());
                                 continue 'to;
@@ -737,7 +739,7 @@ mod tests {
     #[test]
     fn dg_builder_add_path() {
         let mut builder = DirectedGraphBuilder::new();
-        builder.add_path(["hello", "world", "again"]);
+        builder.add_path(["hello", "world", "again"]).unwrap();
         assert_eq!(builder.parents, [0, 1], "Parent is not equal");
         assert_eq!(builder.children, [1, 2], "Children is not equal");
     }
@@ -846,11 +848,11 @@ mod tests {
         let mut builder = DirectedGraphBuilder::new();
         // We put more than 8 children to
         // test if SIMD actually workd
-        builder.add_path(["A", "B", "C", "D"]);
+        builder.add_path(["A", "B", "C", "D"]).unwrap();
         let dg = builder.clone().build_directed();
         assert_eq!(dg.find_path("A", "D").unwrap(), ["A", "B", "C", "D"]);
 
-        builder.add_path(["A", "H", "D"]);
+        builder.add_path(["A", "H", "D"]).unwrap();
         let dg = builder.clone().build_directed();
         assert_eq!(dg.find_path("A", "D").unwrap(), ["A", "H", "D"]);
         assert_eq!(dg.children(["A"]).unwrap(), ["H", "B"]);
@@ -861,7 +863,7 @@ mod tests {
         let mut builder = DirectedGraphBuilder::new();
         // We put more than 8 children to
         // test if SIMD actually workd
-        builder.add_path(["A", "B", "C", "D"]);
+        builder.add_path(["A", "B", "C", "D"]).unwrap();
         let dg = builder.clone().build_directed();
         assert_eq!(
             dg.find_path_one_to_many("A", vec!["A", "B", "C", "D"])
@@ -874,7 +876,7 @@ mod tests {
             ]
         );
 
-        builder.add_path(["A", "H", "D"]);
+        builder.add_path(["A", "H", "D"]).unwrap();
         let dg = builder.clone().build_directed();
         assert_eq!(
             dg.find_path_one_to_many("A", vec!["A", "B", "C", "D"])
@@ -887,6 +889,198 @@ mod tests {
             ]
         );
         assert_eq!(dg.children(["A"]).unwrap(), ["H", "B"]);
+    }
+
+    #[test]
+    fn dg_find_path_one_to_many_many_paths() {
+        // The same edges as in the R test
+        let edges = [
+            ("A", "B"),
+            ("A", "C"),
+            ("B", "Z"),
+            ("C", "D"),
+            ("D", "Z"),
+            ("Z", "F"),
+        ];
+
+        // Build the directed graph
+        let mut builder = DirectedGraphBuilder::new();
+        for (parent, child) in edges {
+            builder.add_edge(parent, child);
+        }
+        let dg = builder.build_directed();
+
+        // Extract the target nodes from the edges’ children:
+        //  B, C, Z, D, Z, F
+        let targets = vec!["B", "C", "Z", "D", "Z", "F"];
+
+        // Find paths from "A" to each target
+        let paths = dg.find_path_one_to_many("A", targets).unwrap();
+
+        // Check the expected paths:
+        let expected = vec![
+            vec!["A", "B"],
+            vec!["A", "C"],
+            vec!["A", "B", "Z"],
+            vec!["A", "C", "D"],
+            vec!["A", "B", "Z"],
+            vec!["A", "B", "Z", "F"],
+        ];
+        assert_eq!(paths, expected);
+    }
+
+    #[test]
+    fn dg_find_path_one_to_many_source_equals_target() {
+        // Test when the source node is also the only target.
+        let mut builder = DirectedGraphBuilder::new();
+        // Adding a single node "A"
+        builder.add_path(["A", "B"]).unwrap();
+        let dg = builder.build_directed();
+        // Expect the trivial path from "A" to "A" to be just ["A"]
+        assert_eq!(
+            dg.find_path_one_to_many("A", vec!["A"]).unwrap(),
+            [vec!["A"]]
+        );
+    }
+
+    #[test]
+    fn dg_find_path_one_to_many_non_existent_target() {
+        // Test when a target node does not exist in the graph.
+        let mut builder = DirectedGraphBuilder::new();
+        builder.add_path(["A", "B"]).unwrap();
+        let dg = builder.build_directed();
+        // Requesting a target "C" (which is not in the graph) should return an error.
+        assert!(dg.find_path_one_to_many("A", vec!["C"]).is_err());
+    }
+
+    #[test]
+    fn dg_find_path_one_to_many_empty_targets() {
+        // Test when an empty target list is provided.
+        let mut builder = DirectedGraphBuilder::new();
+        builder.add_path(["A", "B"]).unwrap();
+        let dg = builder.build_directed();
+        // Expect an empty list of paths.
+        let empty: Vec<Vec<&str>> = Vec::new();
+        assert_eq!(
+            dg.find_path_one_to_many("A", Vec::<&str>::new()).unwrap(),
+            empty
+        );
+    }
+
+    #[test]
+    fn dg_find_path_one_to_many_duplicate_targets() {
+        // Test when duplicate targets are provided.
+        let mut builder = DirectedGraphBuilder::new();
+        builder.add_path(["A", "B", "C"]).unwrap();
+        let dg = builder.build_directed();
+        // "B" appears twice. We expect to get duplicate paths for "B".
+        assert_eq!(
+            dg.find_path_one_to_many("A", vec!["B", "C", "B"]).unwrap(),
+            [vec!["A", "B"], vec!["A", "B", "C"], vec!["A", "B"]]
+        );
+    }
+
+    #[test]
+    fn dg_find_path_one_to_many_with_cycle() {
+        // Test a graph that contains a cycle.
+        let mut builder = DirectedGraphBuilder::new();
+        // Create a cycle: A -> B -> C -> A, and an extra edge from B -> D.
+        builder.add_edge("A", "B");
+        builder.add_edge("B", "C");
+        builder.add_edge("C", "A");
+        builder.add_edge("B", "D");
+        let dg = builder.build_directed();
+        // Expect the path to "B" to be [A, B] and to "D" to be [A, B, D],
+        // ensuring that the cycle does not cause an infinite loop.
+        assert_eq!(
+            dg.find_path_one_to_many("A", vec!["B", "D"]).unwrap(),
+            [vec!["A", "B"], vec!["A", "B", "D"]]
+        );
+    }
+
+    #[test]
+    fn dg_find_path_one_to_many_multiple_paths_same_target() {
+        // Test when there are multiple ways to reach the same target.
+        let mut builder = DirectedGraphBuilder::new();
+        // Graph: A -> B, A -> C, then B -> D and C -> D.
+        builder.add_edge("A", "B");
+        builder.add_edge("A", "C");
+        builder.add_edge("B", "D");
+        builder.add_edge("C", "D");
+        let dg = builder.build_directed();
+        // When the target "D" is requested twice, the function should return the same path for both instances.
+        assert_eq!(
+            dg.find_path_one_to_many("A", vec!["D", "D"]).unwrap(),
+            [vec!["A", "B", "D"], vec!["A", "B", "D"]]
+        );
+    }
+
+    #[test]
+    fn dg_find_path_one_to_many_self_loop() {
+        // Test a self-loop edge.
+        let mut builder = DirectedGraphBuilder::new();
+        // Add a self-loop at "A" and another edge from "A" to "B".
+        builder.add_edge("A", "A");
+        builder.add_edge("A", "B");
+        let dg = builder.build_directed();
+        // Even with the self-loop, the shortest path from "A" to "A" should be just ["A"],
+        // and the path to "B" should be [A, B].
+        assert_eq!(
+            dg.find_path_one_to_many("A", vec!["A", "B"]).unwrap(),
+            [vec!["A"], vec!["A", "B"]]
+        );
+    }
+
+    #[test]
+    fn dg_find_path_one_to_many_disconnected_graph() {
+        // Test a disconnected graph.
+        let mut builder = DirectedGraphBuilder::new();
+        // Build two disconnected components: A -> B and C -> D.
+        builder.add_edge("A", "B");
+        builder.add_edge("C", "D");
+        let dg = builder.build_directed();
+        // Finding a path from "A" to "D" should fail since they are in different components.
+        let paths = dg.find_path_one_to_many("A", vec!["D"]).unwrap();
+        assert!(paths[0].is_empty());
+    }
+
+    #[test]
+    fn dg_find_path_one_to_many_target_ordering() {
+        // Test that the output respects the order of targets provided.
+        let mut builder = DirectedGraphBuilder::new();
+        // Graph: A -> B, A -> C, then B -> D and C -> E.
+        builder.add_edge("A", "B");
+        builder.add_edge("A", "C");
+        builder.add_edge("B", "D");
+        builder.add_edge("C", "E");
+        let dg = builder.build_directed();
+        // The target list is ["E", "D"]. We expect the paths to reflect that ordering.
+        assert_eq!(
+            dg.find_path_one_to_many("A", vec!["E", "D"]).unwrap(),
+            [vec!["A", "C", "E"], vec!["A", "B", "D"]]
+        );
+    }
+
+    #[test]
+    fn dg_find_path_one_to_many_overlapping_paths() {
+        // Test when the paths to different targets share common segments.
+        let mut builder = DirectedGraphBuilder::new();
+        // Graph: A -> B, A -> C, then both B and C lead to D, and D -> E.
+        builder.add_edge("A", "B");
+        builder.add_edge("A", "C");
+        builder.add_edge("B", "D");
+        builder.add_edge("C", "D");
+        builder.add_edge("D", "E");
+        let dg = builder.build_directed();
+        // Request paths for targets "B", "D", and "E". The expected paths should follow the first discovered route.
+        assert_eq!(
+            dg.find_path_one_to_many("A", vec!["B", "D", "E"]).unwrap(),
+            [
+                vec!["A", "B"],
+                vec!["A", "B", "D"],
+                vec!["A", "B", "D", "E"]
+            ]
+        );
     }
 
     #[test]
@@ -991,7 +1185,7 @@ mod tests {
         builder.add_edge("C", "D");
         builder.add_edge("C", "H");
         let dg = builder.clone().build_directed();
-        let dg2 = dg.subset_multi(&["A"]).unwrap();
+        let dg2 = dg.subset_multi(["A"]).unwrap();
         // This should not include children on "0" since
         // the subset has no concept of those relationships
         assert_eq!(dg2.get_roots_over(["A"]).unwrap(), ["A"]);
@@ -1009,7 +1203,7 @@ mod tests {
         builder.add_edge("C", "D");
         builder.add_edge("C", "H");
         let dg = builder.clone().build_directed();
-        let dg2 = dg.subset_multi(&["A", "0"]).unwrap();
+        let dg2 = dg.subset_multi(["A", "0"]).unwrap();
         // This should not include children on "0" since
         // the subset has no concept of those relationships
         assert_eq!(dg2.get_roots_over(["A"]).unwrap(), ["A"]);
@@ -1028,7 +1222,7 @@ mod tests {
         builder.add_edge("C", "D");
         builder.add_edge("C", "H");
         let dg = builder.clone().build_directed();
-        let dg2 = dg.subset_multi(&["A", "D"]).unwrap();
+        let dg2 = dg.subset_multi(["A", "D"]).unwrap();
         // This should not include children on "0" since
         // the subset has no concept of those relationships
         assert_eq!(dg2.get_roots_over(["A"]).unwrap(), ["A"]);
@@ -1040,10 +1234,12 @@ mod tests {
     #[test]
     fn test_find_all_paths_many_paths() {
         let mut builder = DirectedGraphBuilder::new();
-        builder.add_path(["0", "111", "222", "333", "444", "4"]);
-        builder.add_path(["0", "999", "4"]);
-        builder.add_path(["0", "1", "2", "3", "4"]);
-        builder.add_path(["0", "4"]);
+        builder
+            .add_path(["0", "111", "222", "333", "444", "4"])
+            .unwrap();
+        builder.add_path(["0", "999", "4"]).unwrap();
+        builder.add_path(["0", "1", "2", "3", "4"]).unwrap();
+        builder.add_path(["0", "4"]).unwrap();
         let graph = builder.build_acyclic().unwrap();
 
         let paths = graph.find_all_paths("0", "4").unwrap();
@@ -1071,19 +1267,19 @@ mod tests {
 
         // Limit to 1 level
         let dg2 = dg
-            .subset_multi_with_limit(&["A"], NonZeroUsize::new(1).unwrap())
+            .subset_multi_with_limit(["A"], NonZeroUsize::new(1).unwrap())
             .unwrap();
         assert_eq!(dg2.nodes(), ["A", "B", "C"]);
 
         // Limit to 2 levels
         let dg3 = dg
-            .subset_multi_with_limit(&["A"], NonZeroUsize::new(2).unwrap())
+            .subset_multi_with_limit(["A"], NonZeroUsize::new(2).unwrap())
             .unwrap();
         assert_eq!(dg3.nodes(), ["A", "B", "C", "D", "E"]);
 
         // Limit to 3 levels
         let dg4 = dg
-            .subset_multi_with_limit(&["A"], NonZeroUsize::new(3).unwrap())
+            .subset_multi_with_limit(["A"], NonZeroUsize::new(3).unwrap())
             .unwrap();
         assert_eq!(dg4.nodes(), ["A", "B", "C", "D", "E", "F"]);
     }
@@ -1100,13 +1296,13 @@ mod tests {
 
         // Limit to 1 level
         let dg2 = dg
-            .subset_multi_with_limit(&["A", "X"], NonZeroUsize::new(1).unwrap())
+            .subset_multi_with_limit(["A", "X"], NonZeroUsize::new(1).unwrap())
             .unwrap();
         assert_eq!(dg2.nodes(), ["A", "B", "C", "X", "Y"]);
 
         // Limit to 2 levels
         let dg3 = dg
-            .subset_multi_with_limit(&["A", "X"], NonZeroUsize::new(2).unwrap())
+            .subset_multi_with_limit(["A", "X"], NonZeroUsize::new(2).unwrap())
             .unwrap();
         assert_eq!(dg3.nodes(), ["A", "B", "C", "D", "X", "Y", "Z"]);
     }
@@ -1122,7 +1318,7 @@ mod tests {
 
         // Limit greater than actual depth
         let dg2 = dg
-            .subset_multi_with_limit(&["A"], NonZeroUsize::new(10).unwrap())
+            .subset_multi_with_limit(["A"], NonZeroUsize::new(10).unwrap())
             .unwrap();
         assert_eq!(dg2.nodes(), ["A", "B", "C", "D", "E"]);
     }
@@ -1138,7 +1334,7 @@ mod tests {
 
         // Limit to 1 level, starting from both disjoint roots
         let dg2 = dg
-            .subset_multi_with_limit(&["A", "X"], NonZeroUsize::new(1).unwrap())
+            .subset_multi_with_limit(["A", "X"], NonZeroUsize::new(1).unwrap())
             .unwrap();
         assert_eq!(dg2.nodes(), ["A", "B", "C", "X", "Y"]);
     }
@@ -1153,7 +1349,7 @@ mod tests {
         // "Z" does not exist in the graph.
         // Depending on your implementation, this might return an Err or an empty subgraph.
         // Adjust the assertion accordingly based on the expected behavior.
-        let res = dg.subset_multi_with_limit(&["Z"], NonZeroUsize::new(1).unwrap());
+        let res = dg.subset_multi_with_limit(["Z"], NonZeroUsize::new(1).unwrap());
         assert!(
             res.is_err(),
             "Expected an error because root 'Z' doesn't exist in the graph."
@@ -1175,7 +1371,7 @@ mod tests {
         // A limit of 2 should return all nodes in the cycle since once we reach "C", "A" is
         // already visited. The exact behavior depends on how your function handles cycles.
         let dg2 = dg
-            .subset_multi_with_limit(&["A"], NonZeroUsize::new(2).unwrap())
+            .subset_multi_with_limit(["A"], NonZeroUsize::new(2).unwrap())
             .unwrap();
 
         // All nodes in the cycle should appear: A, B, C
