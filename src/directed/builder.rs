@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::sync::Arc;
 
 use crate::utils::{interner::InternerBuilder, node_map::NodeMap, sym::Sym};
 use rayon::prelude::*;
@@ -95,7 +95,7 @@ impl DirectedGraphBuilder {
 
         let mut n_edges = 0;
 
-        let interner = Rc::new(self.interner.build());
+        let interner = Arc::new(self.interner.build());
 
         // Maps parents to their children
         let mut children_map = NodeMap::new(interner.len());

@@ -16,10 +16,7 @@ use crate::{
 };
 use fxhash::FxHashSet;
 use std::{
-    collections::{HashMap, VecDeque},
-    num::NonZeroUsize,
-    ops::Not,
-    rc::Rc,
+    collections::{HashMap, VecDeque}, num::NonZeroUsize, ops::Not, sync::Arc,
 };
 
 // Helper function for constructing the path
@@ -40,7 +37,7 @@ fn construct_path(parents: &[(Sym, Sym)], start_id: Sym, goal_id: Sym, path: &mu
 
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct DirectedGraph {
-    pub(crate) interner: Rc<Resolver>,
+    pub(crate) interner: Arc<Resolver>,
     pub(crate) leaves: Vec<Sym>,
     pub(crate) roots: Vec<Sym>,
     pub(crate) nodes: Vec<Sym>,
@@ -553,7 +550,7 @@ impl DirectedGraph {
             .collect::<Vec<_>>();
 
         DirectedGraph {
-            interner: Rc::clone(&self.interner),
+            interner: Arc::clone(&self.interner),
             nodes,
             leaves: leaves.clone(),
             roots,
@@ -660,7 +657,7 @@ impl DirectedGraph {
             .collect::<Vec<_>>();
 
         DirectedGraph {
-            interner: Rc::clone(&self.interner),
+            interner: Arc::clone(&self.interner),
             nodes,
             leaves: leaves.clone(),
             roots,

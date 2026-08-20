@@ -1,4 +1,4 @@
-use std::{collections::HashMap, rc::Rc};
+use std::{collections::HashMap, sync::Arc};
 
 use fxhash::FxBuildHasher;
 
@@ -40,7 +40,7 @@ impl InternerBuilder {
             indices.push((i, arena.len(), key_bytes.len()));
             arena.extend_from_slice(key.as_bytes());
         }
-        let arena: Rc<[u8]> = Rc::from(arena);
+        let arena: Arc<[u8]> = Arc::from(arena);
         let arena_ptr = arena.as_ptr();
         let mut strs = Vec::new();
         let mut strs_map = HashMap::default();
@@ -70,7 +70,7 @@ pub(crate) struct Resolver {
     strs_map: HashMap<&'static str, Sym, FxBuildHasher>,
     strs: Box<[&'static str]>,
     #[allow(unused)]
-    arena: Rc<[u8]>,
+    arena: Arc<[u8]>,
 }
 
 impl Resolver {
@@ -90,7 +90,7 @@ impl Resolver {
             .collect();
         NodeVec {
             values,
-            arena: Rc::clone(&self.arena),
+            arena: Arc::clone(&self.arena),
         }
     }
     #[inline]

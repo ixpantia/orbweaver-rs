@@ -1,10 +1,11 @@
-use std::rc::Rc;
+use std::sync::Arc;
+
 
 #[derive(Clone)]
 pub struct NodeVec {
     pub(crate) values: Vec<&'static str>,
     #[allow(dead_code)]
-    pub(crate) arena: Rc<[u8]>,
+    pub(crate) arena: Arc<[u8]>,
 }
 
 #[cfg(feature = "serde")]
